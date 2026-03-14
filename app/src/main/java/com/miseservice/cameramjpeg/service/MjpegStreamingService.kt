@@ -5,9 +5,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.miseservice.cameramjpeg.R
@@ -39,7 +41,16 @@ class MjpegStreamingService : LifecycleService() {
                 val quality = intent.getStringExtra(EXTRA_QUALITY)
                     ?.let { runCatching { StreamQuality.valueOf(it) }.getOrNull() }
                     ?: StreamQuality.HIGH
-                startForeground(NOTIFICATION_ID, buildNotification(port))
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    buildNotification(port),
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                    } else {
+                        0
+                    }
+                )
                 startStreaming(port, useFront, quality, keepAwake)
             }
 

@@ -1,5 +1,6 @@
 package com.miseservice.cameramjpeg.ui.screen
 
+import android.content.ClipData
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,9 +19,11 @@ import androidx.compose.material.icons.filled.CameraFront
 import androidx.compose.material.icons.filled.CameraRear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -33,10 +36,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.toClipEntry
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -44,11 +51,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.miseservice.cameramjpeg.domain.model.StreamQuality
 import com.miseservice.cameramjpeg.presentation.AdminViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
     val uiState by viewModel.uiState.collectAsState()
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = modifier
@@ -59,10 +68,6 @@ fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Administration MJPEG", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(
-            "Flux MJPEG local, Wi-Fi, caméra avant/arrière et mode veille.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
 
         StatusCard(isStreaming = uiState.isStreaming, errorMessage = uiState.errorMessage)
 
@@ -76,8 +81,9 @@ fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
         }
 
         ConfigCard(
-            portInput = uiState.portInput,
-            onPortChange = viewModel::onPortChange,
+            currentPort = uiState.portInput.toIntOrNull() ?: 8080,
+            isStreaming = uiState.isStreaming,
+            onPortSaved = viewModel::setStreamingPort,
             selectedQuality = uiState.selectedQuality,
             onQualityChange = viewModel::setQuality,
             useFrontCamera = uiState.useFrontCamera,
@@ -94,7 +100,11 @@ fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
             streamUrl = uiState.streamUrl,
             viewerUrl = uiState.viewerUrl,
             onRefresh = viewModel::refreshNetworkInfo,
-            onCopy = { text -> clipboard.setText(AnnotatedString(text)) }
+            onCopy = { text ->
+                scope.launch {
+                    clipboard.setClipEntry(ClipData.newPlainText("url", text).toClipEntry())
+                }
+            }
         )
     }
 }
@@ -124,8 +134,9 @@ private fun StatusCard(isStreaming: Boolean, errorMessage: String?) {
 
 @Composable
 private fun ConfigCard(
-    portInput: String,
-    onPortChange: (String) -> Unit,
+    currentPort: Int,
+    isStreaming: Boolean,
+    onPortSaved: (String) -> Unit,
     selectedQuality: StreamQuality,
     onQualityChange: (StreamQuality) -> Unit,
     useFrontCamera: Boolean,
@@ -134,18 +145,51 @@ private fun ConfigCard(
     keepScreenAwake: Boolean,
     onKeepAwakeChange: (Boolean) -> Unit
 ) {
+    var portInput by remember(currentPort) { mutableStateOf(currentPort.toString()) }
+    val parsedPort = portInput.toIntOrNull()
+    val isValidPort = parsedPort != null && parsedPort in 1..65535
+    val isChanged = parsedPort != null && parsedPort != currentPort
+
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Réglages stream", fontWeight = FontWeight.SemiBold)
 
-            OutlinedTextField(
-                value = portInput,
-                onValueChange = onPortChange,
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Port") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = portInput,
+                    onValueChange = { portInput = it.filter(Char::isDigit).take(5) },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Port (1-65535)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = portInput.isNotBlank() && !isValidPort
+                )
+
+                Button(
+                    onClick = { onPortSaved(portInput) },
+                    enabled = isValidPort && isChanged,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.size(width = 64.dp, height = 56.dp),
+                    colors = ButtonDefaults.buttonColors()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Save,
+                        contentDescription = "Sauvegarder le port"
+                    )
+                }
+            }
+
+            if (isStreaming) {
+                Text(
+                    text = "Port applique en direct",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             Text("Qualité JPEG")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -221,7 +265,7 @@ private fun NetworkCard(
                     tint = if (isWifiConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                 )
                 Spacer(modifier = Modifier.size(6.dp))
-                Text(if (isWifiConnected) (ssid ?: "Wi-Fi connecté (SSID masqué)") else "Wi-Fi non connecté")
+                Text(if (isWifiConnected) (ssid ?: "Wi-Fi connecte (SSID indisponible)") else "Wi-Fi non connecte")
             }
 
             Text("IP locale: ${localIp ?: "indisponible"}", fontFamily = FontFamily.Monospace)

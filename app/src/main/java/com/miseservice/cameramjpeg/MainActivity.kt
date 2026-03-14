@@ -1,8 +1,11 @@
 package com.miseservice.cameramjpeg
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -21,6 +24,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.miseservice.cameramjpeg.presentation.AdminViewModel
 import com.miseservice.cameramjpeg.ui.screen.AdminScreen
@@ -55,6 +60,7 @@ private fun MainContent(viewModel: AdminViewModel, modifier: Modifier = Modifier
 
     val requestedPermissions = buildList {
         add(Manifest.permission.CAMERA)
+        add(Manifest.permission.ACCESS_COARSE_LOCATION)
         add(Manifest.permission.ACCESS_FINE_LOCATION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
@@ -69,16 +75,36 @@ private fun MainContent(viewModel: AdminViewModel, modifier: Modifier = Modifier
         }
     }
 
+    val context = LocalContext.current
+
     if (!hasPermissions) {
-        PermissionFallback(onRequest = { launcher.launch(requestedPermissions) }, modifier = modifier)
+        PermissionFallback(
+            onRequestPermissions = { launcher.launch(requestedPermissions) },
+            onOpenAppSettings = {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null)
+                    )
+                )
+            },
+            modifier = modifier
+        )
         return
     }
 
     AdminScreen(viewModel = viewModel, modifier = modifier)
 }
 
+internal const val PERMISSION_RETRY_BUTTON_TAG = "permission_retry_button"
+internal const val PERMISSION_SETTINGS_BUTTON_TAG = "permission_settings_button"
+
 @Composable
-private fun PermissionFallback(onRequest: () -> Unit, modifier: Modifier = Modifier) {
+internal fun PermissionFallback(
+    onRequestPermissions: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -87,11 +113,24 @@ private fun PermissionFallback(onRequest: () -> Unit, modifier: Modifier = Modif
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "Les permissions Caméra + Localisation sont nécessaires pour le streaming et la détection SSID.",
+            text = "Les permissions Camera et Localisation sont necessaires pour le streaming et la detection du SSID Wi-Fi.",
             style = MaterialTheme.typography.bodyMedium
         )
-        Button(onClick = onRequest, modifier = Modifier.padding(top = 16.dp)) {
-            Text("Accorder les permissions")
+        Button(
+            onClick = onRequestPermissions,
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .testTag(PERMISSION_RETRY_BUTTON_TAG)
+        ) {
+            Text("Reessayer")
+        }
+        Button(
+            onClick = onOpenAppSettings,
+            modifier = Modifier
+                .padding(top = 8.dp)
+                .testTag(PERMISSION_SETTINGS_BUTTON_TAG)
+        ) {
+            Text("Ouvrir les parametres de l'app")
         }
     }
 }

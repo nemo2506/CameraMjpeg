@@ -52,6 +52,13 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshNetworkInfo() {
         val port = currentPort() ?: 8080
         val network = fetchNetworkInfoUseCase(port)
+        val ssidError = when {
+            !network.isWifiConnected -> "Aucun Wi-Fi actif"
+            network.wifiSsid == null && !network.hasLocationPermission -> "Autorisez la localisation pour afficher le SSID"
+            network.wifiSsid == null && !network.isLocationEnabled -> "Activez la localisation de l'appareil pour afficher le SSID"
+            network.wifiSsid == null -> "SSID indisponible sur ce reseau"
+            else -> null
+        }
         _uiState.update {
             it.copy(
                 localIpAddress = network.localIpAddress,
@@ -59,7 +66,7 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 isWifiConnected = network.isWifiConnected,
                 streamUrl = network.streamUrl,
                 viewerUrl = network.viewerUrl,
-                errorMessage = if (!network.isWifiConnected) "Aucun Wi-Fi actif" else null
+                errorMessage = ssidError
             )
         }
     }
@@ -68,6 +75,33 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(portInput = value.filter(Char::isDigit).take(5))
         }
+    }
+
+    fun setStreamingPort(rawPort: String) {
+        val validatedPort = rawPort.toIntOrNull()?.takeIf { it in 1..65535 }
+        if (validatedPort == null) {
+            _uiState.update { it.copy(errorMessage = "Port invalide (1-65535)") }
+            return
+        }
+
+        val currentPort = _uiState.value.portInput.toIntOrNull()
+        if (currentPort == validatedPort) return
+
+        _uiState.update {
+            it.copy(
+                portInput = validatedPort.toString(),
+                errorMessage = null
+            )
+        }
+
+        val settings = currentSettings()
+        persist(settings)
+
+        if (_uiState.value.isStreaming) {
+            startStreamingInternal(settings)
+        }
+
+        refreshNetworkInfo()
     }
 
     fun setCamera(useFront: Boolean) {
