@@ -15,11 +15,13 @@ import com.miseservice.cameramjpeg.R
 import com.miseservice.cameramjpeg.domain.model.StreamQuality
 import com.miseservice.cameramjpeg.streaming.CameraStreamController
 import com.miseservice.cameramjpeg.streaming.FrameStore
+import com.miseservice.cameramjpeg.streaming.ImageManagementService
 import com.miseservice.cameramjpeg.streaming.MjpegHttpServer
 
 class MjpegStreamingService : LifecycleService() {
 
     private val frameStore = FrameStore()
+    private val imageManagementService by lazy { ImageManagementService(filesDir) }
     private lateinit var streamController: CameraStreamController
     private var server: MjpegHttpServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -86,7 +88,7 @@ class MjpegStreamingService : LifecycleService() {
 
     private fun startStreaming(port: Int, useFront: Boolean, quality: StreamQuality, keepAwake: Boolean) {
         server?.stop()
-        server = MjpegHttpServer(port, frameStore).also { it.start() }
+        server = MjpegHttpServer(port, frameStore, imageManagementService).also { it.start() }
 
         streamController.start(useFront, quality.jpegQuality)
 
