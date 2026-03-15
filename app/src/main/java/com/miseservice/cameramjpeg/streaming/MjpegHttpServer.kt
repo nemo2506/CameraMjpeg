@@ -26,6 +26,13 @@ class MjpegHttpServer(
     private var serverSocket: ServerSocket? = null
     private val clients = CopyOnWriteArrayList<Socket>()
     private val startedAtMs = System.currentTimeMillis()
+    private val metricsLock = Any()
+    @Volatile private var totalFramesSent: Long = 0
+    @Volatile private var totalBytesSent: Long = 0
+    @Volatile private var activeStreamClients: Int = 0
+    @Volatile private var fpsEstimate: Int = 0
+    private var fpsWindowStartMs: Long = System.currentTimeMillis()
+    private var fpsWindowFrames: Int = 0
 
     fun start() {
         if (acceptJob?.isActive == true) return
@@ -73,6 +80,8 @@ class MjpegHttpServer(
                 while (reader.readLine()?.isNotEmpty() == true) { /* skip headers */ }
                 socket.soTimeout = 0  // pas de timeout pendant l'écriture
                 when {
+                    path == "/" || path == "/monitor" -> monitorPage(socket)
+                    path == "/viewer" -> monitorPage(socket)
                     path.startsWith("/stream.mjpeg") -> stream(socket)
                     path.startsWith("/snapshot.jpg") -> snapshot(socket)
                     path == "/api/status" -> status(socket)
@@ -80,7 +89,7 @@ class MjpegHttpServer(
                     path == "/api/image/list" -> listImages(socket)
                     path == "/api/image/delete" && (method == "POST" || method == "GET") -> deleteImage(socket, query["name"])
                     path == "/api/image/clear" && (method == "POST" || method == "GET") -> clearImages(socket)
-                    else -> viewer(socket)
+                    else -> monitorPage(socket)
                 }
             }
         } finally {
@@ -88,45 +97,62 @@ class MjpegHttpServer(
         }
     }
 
-    private fun viewer(socket: Socket) {
+    private fun monitorPage(socket: Socket) {
         val html = """
             <!DOCTYPE html>
             <html>
-            <head><meta charset="utf-8"><title>Viewer</title>
+            <head><meta charset="utf-8"><title>Monitoring</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-            body{background:#0f1115;color:#d8deea;font-family:Arial;margin:0;padding:14px}
-            .grid{display:grid;grid-template-columns:repeat(4,minmax(70px,1fr));gap:8px;margin-bottom:12px}
-            .kpi{background:#171b23;border:1px solid #2a3242;border-radius:10px;padding:10px;display:flex;align-items:center;justify-content:space-between}
+            body{background:#0f1115;color:#d8deea;font-family:Arial;margin:0;padding:12px}
+            .layout{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+            .panel{background:#171b23;border:1px solid #2a3242;border-radius:10px;padding:10px}
+            .grid{display:grid;grid-template-columns:repeat(4,minmax(60px,1fr));gap:8px;margin-bottom:10px}
+            .kpi{background:#121723;border:1px solid #2a3242;border-radius:8px;padding:10px;display:flex;align-items:center;justify-content:space-between}
             .kpi svg{width:18px;height:18px;fill:#8fb8ff;opacity:.95}
-            .kpi .v{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
-            img{width:100%;height:auto;border:1px solid #2a3242;border-radius:10px;display:block;background:#000}
-            .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+            .kpi .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+            img{width:100%;height:auto;border:1px solid #2a3242;border-radius:10px;display:block;background:#000;min-height:220px}
+            .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
             button{background:#1d2532;color:#d8deea;border:1px solid #324158;border-radius:8px;padding:8px 10px;cursor:pointer}
             button:hover{background:#263246}
-            .list{margin-top:10px;background:#171b23;border:1px solid #2a3242;border-radius:10px;padding:10px;max-height:200px;overflow:auto}
+            .list{margin-top:8px;background:#121723;border:1px solid #2a3242;border-radius:8px;padding:8px;max-height:320px;overflow:auto}
             .row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid #232b3a}
             .row:last-child{border-bottom:none}
+            .mono{font-family:Consolas,monospace;font-size:12px;opacity:.9}
+            @media (max-width:900px){ .layout{grid-template-columns:1fr;} }
             </style>
             </head>
             <body>
             <div class="grid">
               <div class="kpi"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM2 3v18h20V3z"/></svg><div class="v" id="port">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M12 5a7 7 0 1 0 7 7h2a9 9 0 1 1-2.64-6.36L17 7a7 7 0 0 0-5-2z"/></svg><div class="v" id="up">0</div></div>
+              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M12 3l9 4v6c0 5-3.5 8.8-9 9-5.5-.2-9-4-9-9V7l9-4z"/></svg><div class="v" id="fps">0</div></div>
+              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></svg><div class="v" id="clients">0</div></div>
+              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-2.34-5.66L16 8a6 6 0 1 0 1.76 4.24h2.24A8 8 0 1 1 12 2z"/></svg><div class="v" id="up">0</div></div>
               <div class="kpi"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM1 4v16h22V4z"/></svg><div class="v" id="bytes">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v6c0 5-3.4 8.7-8 9-4.6-.3-8-4-8-9V7l8-4z"/></svg><div class="v" id="saved">0</div></div>
+              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M6 4h12l1 4H5l1-4zm-1 6h14v10H5z"/></svg><div class="v" id="saved">0</div></div>
+              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M4 20h16v-2H4v2zm0-4h16v-2H4v2zm0-4h16V6H4v6z"/></svg><div class="v" id="frames">0</div></div>
+              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 8h8v8H8z"/></svg><div class="v" id="tbytes">0</div></div>
             </div>
 
-            <img src="/stream.mjpeg"/>
-
-            <div class="controls">
-              <button onclick="saveImage()">Enregistrer</button>
-              <button onclick="refreshList()">Lister</button>
-              <button onclick="clearImages()">Vider</button>
-              <button onclick="window.open('/snapshot.jpg','_blank')">Snapshot</button>
+            <div class="layout">
+              <div class="panel">
+                <img src="/stream.mjpeg"/>
+                <div class="controls">
+                  <button onclick="saveImage()">Enregistrer</button>
+                  <button onclick="window.open('/snapshot.jpg','_blank')">Snapshot</button>
+                  <button onclick="refreshStatus()">Refresh</button>
+                  <button onclick="window.location='/monitor'">Monitor</button>
+                </div>
+                <div class="mono" id="meta">0</div>
+              </div>
+              <div class="panel">
+                <div class="controls">
+                  <button onclick="refreshList()">Lister</button>
+                  <button onclick="clearImages()">Vider</button>
+                </div>
+                <div id="list" class="list"></div>
+              </div>
             </div>
-
-            <div id="list" class="list"></div>
 
             <script>
             async function api(path, opt){
@@ -135,13 +161,24 @@ class MjpegHttpServer(
               try { return JSON.parse(txt); } catch (_) { return { ok:false, raw:txt }; }
             }
             function setNum(id, value){ document.getElementById(id).textContent = String(value || 0); }
+            function fmtBytes(n){
+              const v = Number(n||0);
+              if (v < 1024) return v + 'B';
+              if (v < 1024*1024) return (v/1024).toFixed(1) + 'K';
+              return (v/(1024*1024)).toFixed(1) + 'M';
+            }
             async function refreshStatus(){
               const s = await api('/api/status');
               if (!s) return;
               setNum('port', s.port);
+              setNum('fps', s.fps);
+              setNum('clients', s.streamClients);
               setNum('up', s.uptimeSec);
-              setNum('bytes', s.latestFrameBytes);
+              setNum('bytes', fmtBytes(s.latestFrameBytes));
               setNum('saved', s.savedCount);
+              setNum('frames', s.totalFrames);
+              setNum('tbytes', fmtBytes(s.totalBytes));
+              document.getElementById('meta').textContent = `http:${'$'}{s.port} | c:${'$'}{s.clients} | sc:${'$'}{s.streamClients} | f:${'$'}{s.totalFrames}`;
             }
             async function refreshList(){
               const data = await api('/api/image/list');
@@ -168,13 +205,18 @@ class MjpegHttpServer(
     private fun status(socket: Socket) {
         val latest = frameStore.latest()
         val uptime = ((System.currentTimeMillis() - startedAtMs) / 1000L).coerceAtLeast(0)
+        val streamClients = activeStreamClients.coerceAtLeast(0)
         val json = """
             {
               "port":$port,
               "clients":${clients.size},
+              "streamClients":$streamClients,
+              "fps":$fpsEstimate,
               "uptimeSec":$uptime,
               "latestFrameBytes":${latest?.size ?: 0},
-              "savedCount":${imageManagementService.count()}
+              "savedCount":${imageManagementService.count()},
+              "totalFrames":$totalFramesSent,
+              "totalBytes":$totalBytesSent
             }
         """.trimIndent()
         sendText(socket, 200, "application/json; charset=utf-8", json)
@@ -237,6 +279,7 @@ class MjpegHttpServer(
     private fun stream(socket: Socket) {
         val boundary = "mjpegframe"
         val out = BufferedOutputStream(socket.getOutputStream())
+        synchronized(metricsLock) { activeStreamClients += 1 }
         try {
             out.write(
                 ("HTTP/1.1 200 OK\r\n" +
@@ -252,6 +295,7 @@ class MjpegHttpServer(
                 val next = frameStore.awaitNext(sequence, 3_000) ?: continue
                 sequence = next.first
                 val frame = next.second
+                registerFrameSent(frame.size)
                 out.write(
                     ("--$boundary\r\n" +
                     "Content-Type: image/jpeg\r\n" +
@@ -263,6 +307,25 @@ class MjpegHttpServer(
             }
         } catch (_: Exception) {
             // Client déconnecté ou serveur arrêté
+        } finally {
+            synchronized(metricsLock) {
+                activeStreamClients = (activeStreamClients - 1).coerceAtLeast(0)
+            }
+        }
+    }
+
+    private fun registerFrameSent(size: Int) {
+        synchronized(metricsLock) {
+            totalFramesSent += 1
+            totalBytesSent += size.toLong()
+            fpsWindowFrames += 1
+            val now = System.currentTimeMillis()
+            val elapsed = now - fpsWindowStartMs
+            if (elapsed >= 1000L) {
+                fpsEstimate = ((fpsWindowFrames * 1000L) / elapsed).toInt()
+                fpsWindowFrames = 0
+                fpsWindowStartMs = now
+            }
         }
     }
 
