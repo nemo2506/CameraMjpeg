@@ -56,7 +56,7 @@ Flux et snapshots:
 API JSON:
 
 - `GET /api/status` -> statut serveur/stream
-- `GET /api/battery` -> batterie en temps reel
+- `GET /api/battery` -> batterie en temps reel (`charging: true/false`)
 
 Exemple `GET /api/battery`:
 
@@ -177,7 +177,7 @@ Stream and snapshots:
 JSON APIs:
 
 - `GET /api/status` -> server/stream status
-- `GET /api/battery` -> real-time battery
+- `GET /api/battery` -> real-time battery (`charging: true/false`)
 
 Example `GET /api/battery`:
 
