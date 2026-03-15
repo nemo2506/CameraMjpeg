@@ -1,43 +1,75 @@
 package com.miseservice.cameramjpeg.streaming
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.LifecycleOwner
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
+import android.media.Image
+import android.media.ImageReader
+import android.os.Handler
+import android.os.HandlerThread
+import android.util.Log
+import android.util.Size
+import android.view.Surface
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 class CameraStreamController(
     private val context: Context,
-    private val lifecycleOwner: LifecycleOwner,
     private val frameStore: FrameStore
 ) {
-    private var cameraProvider: ProcessCameraProvider? = null
-    private var imageAnalysis: ImageAnalysis? = null
-    private var useFrontCamera: Boolean = false
+    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+    private var cameraDevice: CameraDevice? = null
+    private var captureSession: CameraCaptureSession? = null
+    private var imageReader: ImageReader? = null
+    private var handlerThread: HandlerThread? = null
+    private var backgroundHandler: Handler? = null
+
+    private var currentCameraId = ""
+    private var isUsingFrontCamera = true
     private var jpegQuality: Int = 92
 
-    suspend fun start(useFrontCamera: Boolean, jpegQuality: Int) {
-        this.useFrontCamera = useFrontCamera
+    private val _latestFrameData = MutableStateFlow<ByteArray?>(null)
+    val latestFrameData: StateFlow<ByteArray?> = _latestFrameData
+
+    private val cameraDeviceCallback = object : CameraDevice.StateCallback() {
+        override fun onOpened(camera: CameraDevice) {
+            cameraDevice = camera
+            startCaptureSession(camera)
+        }
+
+        override fun onDisconnected(camera: CameraDevice) {
+            Log.w(TAG, "Camera disconnected")
+            camera.close()
+            cameraDevice = null
+        }
+
+        override fun onError(camera: CameraDevice, error: Int) {
+            Log.e(TAG, "Camera error: $error")
+            camera.close()
+            cameraDevice = null
+        }
+    }
+
+    fun start(useFrontCamera: Boolean, jpegQuality: Int) {
+        isUsingFrontCamera = useFrontCamera
         this.jpegQuality = jpegQuality
-        val provider = cameraProvider ?: createProvider().also { cameraProvider = it }
-        bind(provider)
+        startCamera()
     }
 
     fun switchCamera(useFront: Boolean) {
-        useFrontCamera = useFront
-        cameraProvider?.let { bind(it) }
+        isUsingFrontCamera = useFront
+        stopInternal()
+        startCamera()
     }
 
     fun updateQuality(newQuality: Int) {
@@ -45,126 +77,152 @@ class CameraStreamController(
     }
 
     fun stop() {
-        cameraProvider?.unbindAll()
+        stopInternal()
     }
 
-    private suspend fun createProvider(): ProcessCameraProvider = withContext(Dispatchers.Main) {
-        val future = ProcessCameraProvider.getInstance(context)
-        suspendCancellableCoroutine { continuation ->
-            future.addListener(
-                {
-                    runCatching { future.get() }
-                        .onSuccess { continuation.resume(it) }
-                        .onFailure { continuation.resumeWithException(it) }
-                },
-                ContextCompat.getMainExecutor(context)
-            )
-        }
-    }
+    @SuppressLint("MissingPermission")
+    private fun startCamera() {
+        startBackgroundThread()
 
-    private fun bind(provider: ProcessCameraProvider) {
-        provider.unbindAll()
+        currentCameraId = getCameraId(isUsingFrontCamera)
+        val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
+        val streamConfigs = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val size: Size = streamConfigs
+            ?.getOutputSizes(ImageFormat.YUV_420_888)
+            ?.maxByOrNull { it.width * it.height }
+            ?: Size(1280, 720)
 
-        imageAnalysis = ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build()
-            .also { analysis ->
-                analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { image ->
-                    handleImage(image)
+        imageReader = ImageReader.newInstance(
+            size.width, size.height, ImageFormat.YUV_420_888, 2
+        ).also { reader ->
+            reader.setOnImageAvailableListener({ r ->
+                try {
+                    val image = r.acquireLatestImage()
+                    if (image != null) {
+                        val nv21 = imageToNV21(image)
+                        image.close()
+                        val jpeg = nv21ToJpeg(nv21, size.width, size.height)
+                        _latestFrameData.value = jpeg
+                        frameStore.publish(jpeg)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing image: ${e.message}", e)
                 }
-            }
-
-        val selector = if (useFrontCamera) {
-            CameraSelector.DEFAULT_FRONT_CAMERA
-        } else {
-            CameraSelector.DEFAULT_BACK_CAMERA
+            }, backgroundHandler)
         }
 
-        provider.bindToLifecycle(lifecycleOwner, selector, imageAnalysis)
+        Log.d(TAG, "Using camera: $currentCameraId (front=$isUsingFrontCamera)")
+        cameraManager.openCamera(currentCameraId, cameraDeviceCallback, backgroundHandler)
     }
 
-    private fun handleImage(image: ImageProxy) {
-        try {
-            val jpeg = image.toJpeg(jpegQuality)
-            frameStore.publish(jpeg)
-        } finally {
-            image.close()
+    private fun startCaptureSession(camera: CameraDevice) {
+        val reader = imageReader ?: return
+        val surface: Surface = reader.surface
+
+        @Suppress("DEPRECATION")
+        camera.createCaptureSession(
+            listOf(surface),
+            object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) {
+                    captureSession = session
+                    try {
+                        val request = camera
+                            .createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                            .apply { addTarget(surface) }
+                            .build()
+                        session.setRepeatingRequest(request, null, backgroundHandler)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Repeating request failed: ${e.message}", e)
+                    }
+                }
+
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    Log.e(TAG, "Capture session configuration failed")
+                }
+            },
+            backgroundHandler
+        )
+    }
+
+    private fun stopInternal() {
+        captureSession?.close(); captureSession = null
+        cameraDevice?.close(); cameraDevice = null
+        imageReader?.close(); imageReader = null
+        stopBackgroundThread()
+    }
+
+    private fun startBackgroundThread() {
+        handlerThread = HandlerThread("CameraBackground").also {
+            it.start()
+            backgroundHandler = Handler(it.looper)
         }
     }
 
-    private fun ImageProxy.toJpeg(quality: Int): ByteArray {
-        val nv21 = yuv420ToNv21(planes, width, height)
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-        return ByteArrayOutputStream().use { stream ->
-            yuvImage.compressToJpeg(Rect(0, 0, width, height), quality, stream)
-            stream.toByteArray()
+    private fun stopBackgroundThread() {
+        handlerThread?.quitSafely()
+        try { handlerThread?.join() } catch (_: InterruptedException) { }
+        handlerThread = null
+        backgroundHandler = null
+    }
+
+    private fun getCameraId(useFront: Boolean): String {
+        val facing = if (useFront) CameraCharacteristics.LENS_FACING_FRONT
+                     else          CameraCharacteristics.LENS_FACING_BACK
+        return cameraManager.cameraIdList.first { id ->
+            cameraManager.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.LENS_FACING) == facing
         }
     }
 
-    private fun yuv420ToNv21(planes: Array<ImageProxy.PlaneProxy>, width: Int, height: Int): ByteArray {
-        val ySize = width * height
-        val uvSize = width * height / 4
-        val nv21 = ByteArray(ySize + uvSize * 2)
+    private fun imageToNV21(image: Image): ByteArray {
+        val planes = image.planes
+        val width  = image.width
+        val height = image.height
+        val ySize  = width * height
+        val uvSize = ySize / 4
+        val nv21   = ByteArray(ySize + uvSize * 2)
 
-        copyPlane(
-            buffer = planes[0].buffer,
-            width = width,
-            height = height,
-            rowStride = planes[0].rowStride,
-            pixelStride = planes[0].pixelStride,
-            out = nv21,
-            offset = 0,
-            outputStride = 1
-        )
-        copyPlane(
-            buffer = planes[2].buffer,
-            width = width / 2,
-            height = height / 2,
-            rowStride = planes[2].rowStride,
-            pixelStride = planes[2].pixelStride,
-            out = nv21,
-            offset = ySize,
-            outputStride = 2
-        )
-        copyPlane(
-            buffer = planes[1].buffer,
-            width = width / 2,
-            height = height / 2,
-            rowStride = planes[1].rowStride,
-            pixelStride = planes[1].pixelStride,
-            out = nv21,
-            offset = ySize + 1,
-            outputStride = 2
-        )
+        copyPlane(planes[0].buffer, width,     height,     planes[0].rowStride, planes[0].pixelStride, nv21, 0,          1)
+        copyPlane(planes[2].buffer, width / 2, height / 2, planes[2].rowStride, planes[2].pixelStride, nv21, ySize,      2)
+        copyPlane(planes[1].buffer, width / 2, height / 2, planes[1].rowStride, planes[1].pixelStride, nv21, ySize + 1,  2)
 
         return nv21
     }
 
+    private fun nv21ToJpeg(nv21: ByteArray, width: Int, height: Int): ByteArray {
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
+        return ByteArrayOutputStream().use { out ->
+            yuvImage.compressToJpeg(Rect(0, 0, width, height), jpegQuality, out)
+            out.toByteArray()
+        }
+    }
+
     private fun copyPlane(
         buffer: ByteBuffer,
-        width: Int,
-        height: Int,
-        rowStride: Int,
-        pixelStride: Int,
-        out: ByteArray,
-        offset: Int,
-        outputStride: Int
+        width: Int, height: Int,
+        rowStride: Int, pixelStride: Int,
+        out: ByteArray, offset: Int, outputStride: Int
     ) {
         val rowData = ByteArray(rowStride)
         var outputPos = offset
         buffer.rewind()
         for (row in 0 until height) {
-            val length = if (pixelStride == 1 && outputStride == 1) width else (width - 1) * pixelStride + 1
+            val length = if (pixelStride == 1 && outputStride == 1) width
+                         else (width - 1) * pixelStride + 1
             buffer.get(rowData, 0, length)
             var inputPos = 0
             repeat(width) {
                 out[outputPos] = rowData[inputPos]
                 outputPos += outputStride
-                inputPos += pixelStride
+                inputPos  += pixelStride
             }
             if (row < height - 1) {
                 buffer.position(buffer.position() + rowStride - length)
             }
         }
+    }
+
+    private companion object {
+        const val TAG = "CameraStreamController"
     }
 }

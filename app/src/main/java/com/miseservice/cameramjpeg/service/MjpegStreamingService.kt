@@ -11,13 +11,11 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
-import androidx.lifecycle.lifecycleScope
 import com.miseservice.cameramjpeg.R
 import com.miseservice.cameramjpeg.domain.model.StreamQuality
 import com.miseservice.cameramjpeg.streaming.CameraStreamController
 import com.miseservice.cameramjpeg.streaming.FrameStore
 import com.miseservice.cameramjpeg.streaming.MjpegHttpServer
-import kotlinx.coroutines.launch
 
 class MjpegStreamingService : LifecycleService() {
 
@@ -28,11 +26,12 @@ class MjpegStreamingService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
-        streamController = CameraStreamController(this, this, frameStore)
+        streamController = CameraStreamController(this, frameStore)
         createChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_START -> {
                 val port = intent.getIntExtra(EXTRA_PORT, 8080)
@@ -45,7 +44,7 @@ class MjpegStreamingService : LifecycleService() {
                     this,
                     NOTIFICATION_ID,
                     buildNotification(port),
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
                     } else {
                         0
@@ -89,9 +88,7 @@ class MjpegStreamingService : LifecycleService() {
         server?.stop()
         server = MjpegHttpServer(port, frameStore).also { it.start() }
 
-        lifecycleScope.launch {
-            streamController.start(useFront, quality.jpegQuality)
-        }
+        streamController.start(useFront, quality.jpegQuality)
 
         if (keepAwake) {
             acquireWakeLock()
