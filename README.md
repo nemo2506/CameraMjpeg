@@ -88,6 +88,16 @@ API images:
    - `http://<ip-telephone>:<port>/stream.mjpeg` (flux brut)
 6. Verifier la batterie via `http://<ip-telephone>:<port>/api/battery`.
 
+Endpoints utiles en usage:
+
+- Viewer: `http://<ip-telephone>:<port>/`, `http://<ip-telephone>:<port>/viewer`, `http://<ip-telephone>:<port>/monitor`
+- Flux: `http://<ip-telephone>:<port>/stream.mjpeg`
+- Snapshot: `http://<ip-telephone>:<port>/snapshot.jpg`
+- Favicon: `http://<ip-telephone>:<port>/favicon.ico`
+- Status JSON: `http://<ip-telephone>:<port>/api/status`
+- Batterie JSON: `http://<ip-telephone>:<port>/api/battery`
+- Images JSON: `http://<ip-telephone>:<port>/api/image/list`
+
 ### Build local
 
 ```powershell
@@ -198,6 +208,16 @@ Image APIs:
    - `http://<phone-ip>:<port>/` (monitoring)
    - `http://<phone-ip>:<port>/stream.mjpeg` (raw stream)
 6. Check battery endpoint at `http://<phone-ip>:<port>/api/battery`.
+
+Useful endpoints during usage:
+
+- Viewer: `http://<phone-ip>:<port>/`, `http://<phone-ip>:<port>/viewer`, `http://<phone-ip>:<port>/monitor`
+- Stream: `http://<phone-ip>:<port>/stream.mjpeg`
+- Snapshot: `http://<phone-ip>:<port>/snapshot.jpg`
+- Favicon: `http://<phone-ip>:<port>/favicon.ico`
+- Status JSON: `http://<phone-ip>:<port>/api/status`
+- Battery JSON: `http://<phone-ip>:<port>/api/battery`
+- Images JSON: `http://<phone-ip>:<port>/api/image/list`
 
 ### Local build
 

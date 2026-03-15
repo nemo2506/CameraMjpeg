@@ -30,6 +30,7 @@ class MjpegStreamingService : LifecycleService() {
     private var server: MjpegHttpServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var latestBatteryStatus: BatteryStatus? = null
+    private val faviconPngBytes by lazy { loadFaviconPngBytes() }
 
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -105,7 +106,8 @@ class MjpegStreamingService : LifecycleService() {
             port = port,
             frameStore = frameStore,
             imageManagementService = imageManagementService,
-            batteryStatusProvider = { latestBatteryStatus }
+            batteryStatusProvider = { latestBatteryStatus },
+            faviconProvider = { faviconPngBytes }
         ).also { it.start() }
 
         streamController.start(useFront, quality.jpegQuality)
@@ -180,6 +182,12 @@ class MjpegStreamingService : LifecycleService() {
             temperatureC = temperatureC,
             timestampMs = System.currentTimeMillis()
         )
+    }
+
+    private fun loadFaviconPngBytes(): ByteArray? {
+        return runCatching {
+            resources.openRawResource(R.drawable.android_chrome_512x512).use { it.readBytes() }
+        }.getOrNull()
     }
 
     private fun createChannel() {

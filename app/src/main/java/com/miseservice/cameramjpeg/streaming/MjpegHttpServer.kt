@@ -22,7 +22,8 @@ class MjpegHttpServer(
     private val port: Int,
     private val frameStore: FrameStore,
     private val imageManagementService: ImageManagementService,
-    private val batteryStatusProvider: () -> BatteryStatus?
+    private val batteryStatusProvider: () -> BatteryStatus?,
+    private val faviconProvider: () -> ByteArray?
 ) {
     private val tag = "MjpegHttpServer"
     private var scope: CoroutineScope = newScope()
@@ -97,6 +98,7 @@ class MjpegHttpServer(
                 when {
                     path == "/" || path == "/monitor" -> monitorPage(socket)
                     path == "/viewer" -> monitorPage(socket)
+                    path == "/favicon.ico" -> favicon(socket)
                     path.startsWith("/stream.mjpeg") -> stream(socket)
                     path.startsWith("/snapshot.jpg") -> snapshot(socket)
                     path == "/api/status" -> status(socket)
@@ -129,6 +131,7 @@ class MjpegHttpServer(
             <!DOCTYPE html>
             <html>
             <head><meta charset="utf-8"><title>$pageTitle</title>
+            <link rel="icon" href="/favicon.ico" type="image/png">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
             html,body{width:100%;height:100%;margin:0}
@@ -272,6 +275,15 @@ class MjpegHttpServer(
             }
         """.trimIndent()
         sendText(socket, 200, "application/json; charset=utf-8", json)
+    }
+
+    private fun favicon(socket: Socket) {
+        val icon = faviconProvider()
+        if (icon == null || icon.isEmpty()) {
+            sendText(socket, 404, "text/plain; charset=utf-8", "favicon not found")
+            return
+        }
+        sendBytes(socket, 200, "image/png", icon)
     }
 
     private fun saveImage(socket: Socket) {
@@ -488,6 +500,27 @@ class MjpegHttpServer(
 
         fun sendText(socket: Socket, code: Int, contentType: String, body: String) {
             val payload = body.toByteArray(StandardCharsets.UTF_8)
+            val statusText = when (code) {
+                200 -> "OK"
+                400 -> "Bad Request"
+                404 -> "Not Found"
+                500 -> "Internal Server Error"
+                503 -> "Service Unavailable"
+                else -> "OK"
+            }
+            BufferedOutputStream(socket.getOutputStream()).also { out ->
+                out.write(
+                    ("HTTP/1.1 $code $statusText\r\n" +
+                        "Content-Type: $contentType\r\n" +
+                        "Content-Length: ${payload.size}\r\n" +
+                        "Connection: close\r\n\r\n").toByteArray(StandardCharsets.US_ASCII)
+                )
+                out.write(payload)
+                out.flush()
+            }
+        }
+
+        fun sendBytes(socket: Socket, code: Int, contentType: String, payload: ByteArray) {
             val statusText = when (code) {
                 200 -> "OK"
                 400 -> "Bad Request"
