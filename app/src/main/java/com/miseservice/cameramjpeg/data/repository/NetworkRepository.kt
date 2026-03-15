@@ -20,6 +20,7 @@ data class NetworkSnapshot(
     val hasLocationPermission: Boolean,
     val isLocationEnabled: Boolean,
     val localIpAddress: String?,
+    val batteryApiUrl: String?,
     val streamUrl: String?,
     val viewerUrl: String?
 )
@@ -37,6 +38,7 @@ class NetworkRepository(private val context: Context) {
             hasLocationPermission = hasLocationPermission,
             isLocationEnabled = locationEnabled,
             localIpAddress = ip,
+            batteryApiUrl = ip?.let { "http://$it:$port/api/battery" },
             streamUrl = ip?.let { "http://$it:$port/stream.mjpeg" },
             viewerUrl = ip?.let { "http://$it:$port/" }
         )

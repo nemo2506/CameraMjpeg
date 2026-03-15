@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.toClipEntry
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -97,6 +98,11 @@ fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
             isWifiConnected = uiState.isWifiConnected,
             ssid = uiState.wifiSsid,
             localIp = uiState.localIpAddress,
+            batteryLevelPercent = uiState.batteryLevelPercent,
+            isBatteryCharging = uiState.isBatteryCharging,
+            batteryStatusLabel = uiState.batteryStatusLabel,
+            batteryTemperatureC = uiState.batteryTemperatureC,
+            batteryApiUrl = uiState.batteryApiUrl,
             streamUrl = uiState.streamUrl,
             viewerUrl = uiState.viewerUrl,
             onRefresh = viewModel::refreshNetworkInfo,
@@ -244,11 +250,23 @@ private fun NetworkCard(
     isWifiConnected: Boolean,
     ssid: String?,
     localIp: String?,
+    batteryLevelPercent: Int?,
+    isBatteryCharging: Boolean,
+    batteryStatusLabel: String?,
+    batteryTemperatureC: Float?,
+    batteryApiUrl: String?,
     streamUrl: String?,
     viewerUrl: String?,
     onRefresh: () -> Unit,
     onCopy: (String) -> Unit
 ) {
+    val batteryColor = when {
+        batteryLevelPercent == null -> MaterialTheme.colorScheme.onSurfaceVariant
+        batteryLevelPercent < 20 -> MaterialTheme.colorScheme.error
+        batteryLevelPercent < 50 -> MaterialTheme.colorScheme.tertiary
+        else -> Color(0xFF2E7D32)
+    }
+
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -269,6 +287,31 @@ private fun NetworkCard(
             }
 
             Text("IP locale: ${localIp ?: "indisponible"}", fontFamily = FontFamily.Monospace)
+            Text(
+                buildString {
+                    append("Batterie: ")
+                    if (batteryLevelPercent == null) {
+                        append("indisponible")
+                    } else {
+                        append(batteryLevelPercent)
+                        append("%")
+                        if (!batteryStatusLabel.isNullOrBlank()) {
+                            append(" • ")
+                            append(batteryStatusLabel)
+                        }
+                        batteryTemperatureC?.let {
+                            append(" • ")
+                            append(String.format(java.util.Locale.US, "%.1f°C", it))
+                        }
+                        if (isBatteryCharging) {
+                            append(" ⚡")
+                        }
+                    }
+                },
+                fontFamily = FontFamily.Monospace,
+                color = batteryColor
+            )
+            UrlRow(label = "API Batterie (JSON)", value = batteryApiUrl, onCopy = onCopy)
             UrlRow(label = "Flux MJPEG", value = streamUrl, onCopy = onCopy)
             UrlRow(label = "Viewer", value = viewerUrl, onCopy = onCopy)
         }

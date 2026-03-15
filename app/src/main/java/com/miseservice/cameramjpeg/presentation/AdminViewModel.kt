@@ -1,8 +1,13 @@
 package com.miseservice.cameramjpeg.presentation
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.BatteryManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -29,7 +34,14 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(AdminUiState())
     val uiState: StateFlow<AdminUiState> = _uiState
 
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            updateBatteryInfo(intent)
+        }
+    }
+
     init {
+        registerBatteryReceiver()
         viewModelScope.launch {
             val settings = loadSettingsUseCase()
             _uiState.update {
@@ -49,6 +61,11 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    override fun onCleared() {
+        runCatching { appContext.unregisterReceiver(batteryReceiver) }
+        super.onCleared()
+    }
+
     fun refreshNetworkInfo() {
         val port = currentPort() ?: 8080
         val network = fetchNetworkInfoUseCase(port)
@@ -64,6 +81,7 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 localIpAddress = network.localIpAddress,
                 wifiSsid = network.wifiSsid,
                 isWifiConnected = network.isWifiConnected,
+                batteryApiUrl = network.batteryApiUrl,
                 streamUrl = network.streamUrl,
                 viewerUrl = network.viewerUrl,
                 errorMessage = ssidError
@@ -71,11 +89,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun onPortChange(value: String) {
-        _uiState.update {
-            it.copy(portInput = value.filter(Char::isDigit).take(5))
-        }
-    }
 
     fun setStreamingPort(rawPort: String) {
         val validatedPort = rawPort.toIntOrNull()?.takeIf { it in 1..65535 }
@@ -155,6 +168,56 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             cameraOk && locationOk
         } else {
             cameraOk
+        }
+    }
+
+    private fun registerBatteryReceiver() {
+        val stickyIntent = appContext.registerReceiver(
+            batteryReceiver,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        )
+        updateBatteryInfo(stickyIntent)
+    }
+
+    private fun updateBatteryInfo(intent: Intent?) {
+        intent ?: return
+        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) {
+            _uiState.update {
+                it.copy(
+                    batteryLevelPercent = null,
+                    isBatteryCharging = false,
+                    batteryStatusLabel = null,
+                    batteryTemperatureC = null
+                )
+            }
+            return
+        }
+
+        val percent = ((level * 100f) / scale.toFloat()).toInt().coerceIn(0, 100)
+        val statusCode = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
+        val isCharging = statusCode == BatteryManager.BATTERY_STATUS_CHARGING ||
+            statusCode == BatteryManager.BATTERY_STATUS_FULL
+        val statusLabel = when (statusCode) {
+            BatteryManager.BATTERY_STATUS_CHARGING -> "En charge"
+            BatteryManager.BATTERY_STATUS_DISCHARGING -> "Décharge"
+            BatteryManager.BATTERY_STATUS_FULL -> "Pleine"
+            BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Branchée"
+            else -> "Indisponible"
+        }
+        val rawTemperature = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+        val temperatureC = rawTemperature
+            .takeIf { it != Int.MIN_VALUE }
+            ?.let { it / 10f }
+
+        _uiState.update {
+            it.copy(
+                batteryLevelPercent = percent,
+                isBatteryCharging = isCharging,
+                batteryStatusLabel = statusLabel,
+                batteryTemperatureC = temperatureC
+            )
         }
     }
 

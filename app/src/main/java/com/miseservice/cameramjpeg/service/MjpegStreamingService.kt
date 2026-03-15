@@ -3,10 +3,13 @@ package com.miseservice.cameramjpeg.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.BatteryManager
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -14,6 +17,7 @@ import androidx.lifecycle.LifecycleService
 import com.miseservice.cameramjpeg.R
 import com.miseservice.cameramjpeg.domain.model.StreamQuality
 import com.miseservice.cameramjpeg.streaming.CameraStreamController
+import com.miseservice.cameramjpeg.streaming.BatteryStatus
 import com.miseservice.cameramjpeg.streaming.FrameStore
 import com.miseservice.cameramjpeg.streaming.ImageManagementService
 import com.miseservice.cameramjpeg.streaming.MjpegHttpServer
@@ -25,11 +29,19 @@ class MjpegStreamingService : LifecycleService() {
     private lateinit var streamController: CameraStreamController
     private var server: MjpegHttpServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile private var latestBatteryStatus: BatteryStatus? = null
+
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            updateBatteryStatus(intent)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         streamController = CameraStreamController(this, frameStore)
         createChannel()
+        registerBatteryTracking()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -83,12 +95,18 @@ class MjpegStreamingService : LifecycleService() {
 
     override fun onDestroy() {
         stopStreaming()
+        unregisterBatteryTracking()
         super.onDestroy()
     }
 
     private fun startStreaming(port: Int, useFront: Boolean, quality: StreamQuality, keepAwake: Boolean) {
         server?.stop()
-        server = MjpegHttpServer(port, frameStore, imageManagementService).also { it.start() }
+        server = MjpegHttpServer(
+            port = port,
+            frameStore = frameStore,
+            imageManagementService = imageManagementService,
+            batteryStatusProvider = { latestBatteryStatus }
+        ).also { it.start() }
 
         streamController.start(useFront, quality.jpegQuality)
 
@@ -108,7 +126,7 @@ class MjpegStreamingService : LifecycleService() {
 
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
-        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val power = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CameraMjpeg::StreamWakeLock").apply {
             acquire(10 * 60 * 60 * 1000L)
         }
@@ -121,6 +139,47 @@ class MjpegStreamingService : LifecycleService() {
             }
         }
         wakeLock = null
+    }
+
+    private fun registerBatteryTracking() {
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val stickyIntent = registerReceiver(batteryReceiver, filter)
+        updateBatteryStatus(stickyIntent)
+    }
+
+    private fun unregisterBatteryTracking() {
+        runCatching { unregisterReceiver(batteryReceiver) }
+    }
+
+    private fun updateBatteryStatus(intent: Intent?) {
+        intent ?: return
+        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) return
+
+        val percent = ((level * 100f) / scale.toFloat()).toInt().coerceIn(0, 100)
+        val statusCode = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
+        val isCharging = statusCode == BatteryManager.BATTERY_STATUS_CHARGING ||
+            statusCode == BatteryManager.BATTERY_STATUS_FULL
+        val statusLabel = when (statusCode) {
+            BatteryManager.BATTERY_STATUS_CHARGING -> "charging"
+            BatteryManager.BATTERY_STATUS_DISCHARGING -> "discharging"
+            BatteryManager.BATTERY_STATUS_FULL -> "full"
+            BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "not_charging"
+            else -> "unknown"
+        }
+        val rawTemperature = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+        val temperatureC = rawTemperature
+            .takeIf { it != Int.MIN_VALUE }
+            ?.let { it / 10f }
+
+        latestBatteryStatus = BatteryStatus(
+            levelPercent = percent,
+            charging = isCharging,
+            status = statusLabel,
+            temperatureC = temperatureC,
+            timestampMs = System.currentTimeMillis()
+        )
     }
 
     private fun createChannel() {
