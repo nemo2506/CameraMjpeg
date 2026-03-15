@@ -9,7 +9,6 @@ import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager as AndroidCameraManager
-import android.hardware.camera2.CaptureRequest
 import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
