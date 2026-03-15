@@ -104,54 +104,46 @@ class MjpegHttpServer(
             <head><meta charset="utf-8"><title>Monitoring</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-            body{background:#0f1115;color:#d8deea;font-family:Arial;margin:0;padding:12px}
-            .layout{display:grid;grid-template-columns:2fr 1fr;gap:10px}
-            .panel{background:#171b23;border:1px solid #2a3242;border-radius:10px;padding:10px}
-            .grid{display:grid;grid-template-columns:repeat(4,minmax(60px,1fr));gap:8px;margin-bottom:10px}
-            .kpi{background:#121723;border:1px solid #2a3242;border-radius:8px;padding:10px;display:flex;align-items:center;justify-content:space-between}
-            .kpi svg{width:18px;height:18px;fill:#8fb8ff;opacity:.95}
-            .kpi .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
-            img{width:100%;height:auto;border:1px solid #2a3242;border-radius:10px;display:block;background:#000;min-height:220px}
-            .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-            .icon-btn{background:#1d2532;color:#d8deea;border:1px solid #324158;border-radius:8px;width:36px;height:36px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0}
-            .icon-btn:hover{background:#263246}
-            .icon-btn svg{width:18px;height:18px;fill:#d8deea}
-            .list{margin-top:8px;background:#121723;border:1px solid #2a3242;border-radius:8px;padding:8px;max-height:320px;overflow:auto}
-            .row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid #232b3a}
-            .row:last-child{border-bottom:none}
-            .mono{font-family:Consolas,monospace;font-size:12px;opacity:.9}
-            @media (max-width:900px){ .layout{grid-template-columns:1fr;} }
+            html,body{width:100%;height:100%;margin:0}
+            body{background:#07090d;color:#d8deea;font-family:Arial,Helvetica,sans-serif;overflow:hidden}
+            .stage{position:relative;width:100%;height:100%}
+            .stream-wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
+            #stream{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+            .bottom-frame{
+              position:absolute;
+              left:50%;
+              bottom:16px;
+              transform:translateX(-50%);
+              display:flex;
+              align-items:center;
+              gap:16px;
+              padding:10px 14px;
+              border:1px solid #2c3748;
+              border-radius:12px;
+              background:rgba(16,21,30,.86);
+              backdrop-filter: blur(6px);
+            }
+            .snapshot-btn{width:44px;height:44px;border:1px solid #3e4d66;border-radius:10px;background:#1d2532;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+            .snapshot-btn:hover{background:#263246}
+            .snapshot-btn svg{width:20px;height:20px;fill:#d8deea}
+            .tech{display:flex;gap:14px;font-size:14px;font-variant-numeric:tabular-nums}
+            .chip{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #2c3748;border-radius:8px;background:#111824}
+            .chip svg{width:14px;height:14px;fill:#8fb8ff}
             </style>
             </head>
             <body>
-            <div class="grid">
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM2 3v18h20V3z"/></svg><div class="v" id="port">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M12 3l9 4v6c0 5-3.5 8.8-9 9-5.5-.2-9-4-9-9V7l9-4z"/></svg><div class="v" id="fps">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></svg><div class="v" id="clients">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-2.34-5.66L16 8a6 6 0 1 0 1.76 4.24h2.24A8 8 0 1 1 12 2z"/></svg><div class="v" id="up">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM1 4v16h22V4z"/></svg><div class="v" id="bytes">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M6 4h12l1 4H5l1-4zm-1 6h14v10H5z"/></svg><div class="v" id="saved">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M4 20h16v-2H4v2zm0-4h16v-2H4v2zm0-4h16V6H4v6z"/></svg><div class="v" id="frames">0</div></div>
-              <div class="kpi"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 8h8v8H8z"/></svg><div class="v" id="tbytes">0</div></div>
-            </div>
-
-            <div class="layout">
-              <div class="panel">
-                <img src="/stream.mjpeg"/>
-                <div class="controls">
-                  <button class="icon-btn" onclick="saveImage()" title="Enregistrer" aria-label="Enregistrer"><svg viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM7 5v5h8V5zm0 9h10v5H7z"/></svg></button>
-                  <button class="icon-btn" onclick="window.open('/snapshot.jpg','_blank')" title="Snapshot" aria-label="Snapshot"><svg viewBox="0 0 24 24"><path d="M9 4l-2 2H4v14h16V6h-3l-2-2zm3 4a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg></button>
-                  <button class="icon-btn" onclick="refreshStatus()" title="Rafraichir" aria-label="Rafraichir"><svg viewBox="0 0 24 24"><path d="M12 4a8 8 0 1 0 7.75 10h-2.1A6 6 0 1 1 16 8l-2 2h6V4l-2.4 2.4A7.96 7.96 0 0 0 12 4z"/></svg></button>
-                  <button class="icon-btn" onclick="window.location='/monitor'" title="Monitoring" aria-label="Monitoring"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3zm2 2v14h14V5zm2 10h2v2H7zm4-4h2v6h-2zm4-3h2v9h-2z"/></svg></button>
-                </div>
-                <div class="mono" id="meta">0</div>
+            <div class="stage">
+              <div class="stream-wrap">
+                <img id="stream" src="/stream.mjpeg"/>
               </div>
-              <div class="panel">
-                <div class="controls">
-                  <button class="icon-btn" onclick="refreshList()" title="Lister" aria-label="Lister"><svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg></button>
-                  <button class="icon-btn" onclick="clearImages()" title="Vider" aria-label="Vider"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7L6 7zm3-3h6l1 2H8l1-2z"/></svg></button>
+              <div class="bottom-frame">
+                <button class="snapshot-btn" onclick="window.open('/snapshot.jpg','_blank')" title="Snapshot" aria-label="Snapshot">
+                  <svg viewBox="0 0 24 24"><path d="M9 4l-2 2H4v14h16V6h-3l-2-2zm3 4a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg>
+                </button>
+                <div class="tech">
+                  <div class="chip"><svg viewBox="0 0 24 24"><path d="M12 3l9 4v6c0 5-3.5 8.8-9 9-5.5-.2-9-4-9-9V7l9-4z"/></svg><span id="fps">0 fps</span></div>
+                  <div class="chip"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></svg><span id="res">0x0</span></div>
                 </div>
-                <div id="list" class="list"></div>
               </div>
             </div>
 
@@ -161,41 +153,21 @@ class MjpegHttpServer(
               const txt = await res.text();
               try { return JSON.parse(txt); } catch (_) { return { ok:false, raw:txt }; }
             }
-            function setNum(id, value){ document.getElementById(id).textContent = String(value || 0); }
-            function fmtBytes(n){
-              const v = Number(n||0);
-              if (v < 1024) return v + 'B';
-              if (v < 1024*1024) return (v/1024).toFixed(1) + 'K';
-              return (v/(1024*1024)).toFixed(1) + 'M';
-            }
             async function refreshStatus(){
               const s = await api('/api/status');
               if (!s) return;
-              setNum('port', s.port);
-              setNum('fps', s.fps);
-              setNum('clients', s.streamClients);
-              setNum('up', s.uptimeSec);
-              setNum('bytes', fmtBytes(s.latestFrameBytes));
-              setNum('saved', s.savedCount);
-              setNum('frames', s.totalFrames);
-              setNum('tbytes', fmtBytes(s.totalBytes));
-              document.getElementById('meta').textContent = `http:${'$'}{s.port} | c:${'$'}{s.clients} | sc:${'$'}{s.streamClients} | f:${'$'}{s.totalFrames}`;
+              document.getElementById('fps').textContent = String((s.fps || 0)) + ' fps';
             }
-            async function refreshList(){
-              const data = await api('/api/image/list');
-              const box = document.getElementById('list');
-              const items = (data && data.items) || [];
-              if (!items.length) { box.innerHTML = '<div>0</div>'; return; }
-              box.innerHTML = items.map(it =>
-                `<div class="row"><span>${'$'}{it.name}</span><button class="icon-btn" title="Supprimer" aria-label="Supprimer" onclick="deleteImage('${'$'}{it.name}')"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7L6 7zm3-3h6l1 2H8l1-2z"/></svg></button></div>`
-              ).join('');
+            function refreshResolution(){
+              const img = document.getElementById('stream');
+              const w = img.naturalWidth || 0;
+              const h = img.naturalHeight || 0;
+              document.getElementById('res').textContent = w + 'x' + h;
             }
-            async function saveImage(){ await api('/api/image/save', { method:'POST' }); await refreshStatus(); await refreshList(); }
-            async function clearImages(){ await api('/api/image/clear', { method:'POST' }); await refreshStatus(); await refreshList(); }
-            async function deleteImage(name){ await api('/api/image/delete?name=' + encodeURIComponent(name), { method:'POST' }); await refreshStatus(); await refreshList(); }
             refreshStatus();
-            refreshList();
+            refreshResolution();
             setInterval(refreshStatus, 1000);
+            setInterval(refreshResolution, 1000);
             </script>
             </body>
             </html>
