@@ -24,3 +24,19 @@ app/build/
 # Gradle log files
 gradle_assemble.exit
 gradle_assemble.log
+
+# Sensitive files
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*.crt
+*.der
+keystore.properties
+secrets.properties
+.env
+.env.*
+google-services.json
+**/google-services.json
+

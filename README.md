@@ -13,7 +13,7 @@ Application Android Compose de streaming MJPEG avec architecture MVVM.
 ## Execution
 
 ```powershell
-cd D:\PATH\TO\CameraMjpeg
+cd CameraMjpeg
 .\gradlew.bat :app:installDebug
 ```
 
