@@ -100,8 +100,9 @@ class CameraStreamController(
                     if (image != null) {
                         val nv21 = imageToNV21(image)
                         image.close()
-                        _latestFrameData.value = nv21
-                        val jpeg = nv21ToJpeg(nv21, size.width, size.height)
+                        val rotatedNv21 = rotateNv21_180(nv21, size.width, size.height)
+                        _latestFrameData.value = rotatedNv21
+                        val jpeg = nv21ToJpeg(rotatedNv21, size.width, size.height)
                         frameStore.publish(jpeg)
                     }
                 } catch (e: Exception) {
@@ -194,6 +195,23 @@ class CameraStreamController(
             yuvImage.compressToJpeg(Rect(0, 0, width, height), jpegQuality, out)
             out.toByteArray()
         }
+    }
+
+    private fun rotateNv21_180(nv21: ByteArray, width: Int, height: Int): ByteArray {
+        val ySize = width * height
+        val rotated = ByteArray(nv21.size)
+        var out = 0
+
+        for (i in ySize - 1 downTo 0) {
+            rotated[out++] = nv21[i]
+        }
+
+        for (i in nv21.size - 2 downTo ySize step 2) {
+            rotated[out++] = nv21[i]
+            rotated[out++] = nv21[i + 1]
+        }
+
+        return rotated
     }
 
     private fun copyPlane(
