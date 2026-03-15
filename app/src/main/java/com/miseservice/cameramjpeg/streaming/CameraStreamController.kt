@@ -8,7 +8,7 @@ import android.graphics.YuvImage
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
-import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraManager as AndroidCameraManager
 import android.hardware.camera2.CaptureRequest
 import android.media.Image
 import android.media.ImageReader
@@ -26,7 +26,7 @@ class CameraStreamController(
     private val context: Context,
     private val frameStore: FrameStore
 ) {
-    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as AndroidCameraManager
 
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
@@ -101,8 +101,8 @@ class CameraStreamController(
                     if (image != null) {
                         val nv21 = imageToNV21(image)
                         image.close()
+                        _latestFrameData.value = nv21
                         val jpeg = nv21ToJpeg(nv21, size.width, size.height)
-                        _latestFrameData.value = jpeg
                         frameStore.publish(jpeg)
                     }
                 } catch (e: Exception) {
