@@ -113,8 +113,9 @@ class MjpegHttpServer(
             .kpi .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
             img{width:100%;height:auto;border:1px solid #2a3242;border-radius:10px;display:block;background:#000;min-height:220px}
             .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-            button{background:#1d2532;color:#d8deea;border:1px solid #324158;border-radius:8px;padding:8px 10px;cursor:pointer}
-            button:hover{background:#263246}
+            .icon-btn{background:#1d2532;color:#d8deea;border:1px solid #324158;border-radius:8px;width:36px;height:36px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0}
+            .icon-btn:hover{background:#263246}
+            .icon-btn svg{width:18px;height:18px;fill:#d8deea}
             .list{margin-top:8px;background:#121723;border:1px solid #2a3242;border-radius:8px;padding:8px;max-height:320px;overflow:auto}
             .row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid #232b3a}
             .row:last-child{border-bottom:none}
@@ -138,17 +139,17 @@ class MjpegHttpServer(
               <div class="panel">
                 <img src="/stream.mjpeg"/>
                 <div class="controls">
-                  <button onclick="saveImage()">Enregistrer</button>
-                  <button onclick="window.open('/snapshot.jpg','_blank')">Snapshot</button>
-                  <button onclick="refreshStatus()">Refresh</button>
-                  <button onclick="window.location='/monitor'">Monitor</button>
+                  <button class="icon-btn" onclick="saveImage()" title="Enregistrer" aria-label="Enregistrer"><svg viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM7 5v5h8V5zm0 9h10v5H7z"/></svg></button>
+                  <button class="icon-btn" onclick="window.open('/snapshot.jpg','_blank')" title="Snapshot" aria-label="Snapshot"><svg viewBox="0 0 24 24"><path d="M9 4l-2 2H4v14h16V6h-3l-2-2zm3 4a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg></button>
+                  <button class="icon-btn" onclick="refreshStatus()" title="Rafraichir" aria-label="Rafraichir"><svg viewBox="0 0 24 24"><path d="M12 4a8 8 0 1 0 7.75 10h-2.1A6 6 0 1 1 16 8l-2 2h6V4l-2.4 2.4A7.96 7.96 0 0 0 12 4z"/></svg></button>
+                  <button class="icon-btn" onclick="window.location='/monitor'" title="Monitoring" aria-label="Monitoring"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3zm2 2v14h14V5zm2 10h2v2H7zm4-4h2v6h-2zm4-3h2v9h-2z"/></svg></button>
                 </div>
                 <div class="mono" id="meta">0</div>
               </div>
               <div class="panel">
                 <div class="controls">
-                  <button onclick="refreshList()">Lister</button>
-                  <button onclick="clearImages()">Vider</button>
+                  <button class="icon-btn" onclick="refreshList()" title="Lister" aria-label="Lister"><svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg></button>
+                  <button class="icon-btn" onclick="clearImages()" title="Vider" aria-label="Vider"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7L6 7zm3-3h6l1 2H8l1-2z"/></svg></button>
                 </div>
                 <div id="list" class="list"></div>
               </div>
@@ -186,7 +187,7 @@ class MjpegHttpServer(
               const items = (data && data.items) || [];
               if (!items.length) { box.innerHTML = '<div>0</div>'; return; }
               box.innerHTML = items.map(it =>
-                `<div class="row"><span>${'$'}{it.name}</span><button onclick="deleteImage('${'$'}{it.name}')">X</button></div>`
+                `<div class="row"><span>${'$'}{it.name}</span><button class="icon-btn" title="Supprimer" aria-label="Supprimer" onclick="deleteImage('${'$'}{it.name}')"><svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7L6 7zm3-3h6l1 2H8l1-2z"/></svg></button></div>`
               ).join('');
             }
             async function saveImage(){ await api('/api/image/save', { method:'POST' }); await refreshStatus(); await refreshList(); }
