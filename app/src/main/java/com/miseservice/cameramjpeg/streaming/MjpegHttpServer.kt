@@ -219,6 +219,7 @@ class MjpegHttpServer(
                 if (b.levelPercent < 20) chip.className = 'chip chip-low';
                 else if (b.levelPercent < 50) chip.className = 'chip chip-mid';
                 else chip.className = 'chip chip-ok';
+                if (typeof b.isCharging === 'boolean') setChargeBtn(b.isCharging);
               } catch (_) {
                 document.getElementById('battery').textContent = 'batterie --';
                 document.getElementById('battery-chip').className = 'chip chip-muted';
@@ -246,9 +247,18 @@ class MjpegHttpServer(
             }
             async function toggleCharging() {
               var next = !chargingActive;
+              var btn = document.getElementById('charge-btn');
+              if (btn) btn.style.opacity = '0.5';
               var r = await api('/api/battery/charge?enabled=' + (next ? '1' : '0'), {method:'POST'});
-              if (r && r.ok) { setChargeBtn(next); }
-              setTimeout(refreshBattery, 600);
+              if (btn) btn.style.opacity = '1';
+              if (r && r.ok) {
+                setChargeBtn(next);
+              } else {
+                var prev = chargingActive;
+                setChargeBtn(prev);
+                if (btn) { btn.style.borderColor = '#6f2f38'; setTimeout(function(){ setChargeBtn(prev); }, 1200); }
+              }
+              setTimeout(refreshBattery, 1200);
             }
             </script>
             </body>

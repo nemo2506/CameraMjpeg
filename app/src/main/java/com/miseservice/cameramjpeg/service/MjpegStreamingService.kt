@@ -101,13 +101,52 @@ class MjpegStreamingService : LifecycleService() {
     }
 
     private fun setCharging(enabled: Boolean): Boolean {
-        return try {
-            val cmd = if (enabled) "dumpsys battery reset" else "dumpsys battery unplug"
-            Runtime.getRuntime().exec(cmd.split(" ").toTypedArray()).waitFor() == 0
-        } catch (e: Exception) {
-            false
+        val flag = if (enabled) "1" else "0"
+
+        // sysfs paths common across OEMs (Qualcomm / Samsung / MTK / misc)
+        val sysfsPaths = listOf(
+            "/sys/class/power_supply/battery/charging_enabled",
+            "/sys/class/power_supply/battery/battery_charging_enabled",
+            "/sys/class/power_supply/main-charger/ChargerEnable",
+            "/sys/devices/platform/battery/charging_enabled"
+        )
+
+        val existingPath = sysfsPaths.firstOrNull { java.io.File(it).exists() }
+
+        if (existingPath != null) {
+            // 1. Direct write — works on some custom ROMs without root
+            runCatching { java.io.File(existingPath).writeText(flag) }
+                .onSuccess { if (verifySysfs(existingPath, flag)) return true }
+
+            // 2. su -c echo — rooted devices
+            runCatching {
+                Runtime.getRuntime()
+                    .exec(arrayOf("su", "-c", "echo $flag > $existingPath"))
+                    .waitFor()
+            }.onSuccess { if (verifySysfs(existingPath, flag)) return true }
         }
+
+        // 3. dumpsys battery — works via ADB shell (android.permission.DUMP)
+        val dumpsysCmds = if (enabled) {
+            listOf(arrayOf("dumpsys", "battery", "reset"))
+        } else {
+            listOf(
+                arrayOf("dumpsys", "battery", "set", "ac", "0"),
+                arrayOf("dumpsys", "battery", "set", "usb", "0"),
+                arrayOf("dumpsys", "battery", "set", "wireless", "0"),
+                arrayOf("dumpsys", "battery", "unplug")
+            )
+        }
+        var allOk = true
+        for (cmd in dumpsysCmds) {
+            runCatching { allOk = allOk && Runtime.getRuntime().exec(cmd).waitFor() == 0 }
+                .onFailure { allOk = false }
+        }
+        return allOk
     }
+
+    private fun verifySysfs(path: String, expected: String): Boolean =
+        runCatching { java.io.File(path).readText().trim() == expected }.getOrDefault(false)
 
     private fun startStreaming(port: Int, useFront: Boolean, quality: StreamQuality, keepAwake: Boolean) {
         server?.stop()
