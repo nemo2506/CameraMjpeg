@@ -15,9 +15,7 @@
 > - Flux MJPEG : `GET /stream.mjpeg`
 > - Snapshot : `GET /snapshot.jpg`
 > - Batterie : `GET /api/battery`
-> - Charge : `GET|POST /api/battery/charge?enabled=0|1`
 > - Statut : `GET /api/status`
-> - Images : `GET|POST /api/image/save`, `GET /api/image/list`, `GET|POST /api/image/delete?name=<fichier>`, `GET|POST /api/image/clear`
 
 > [!IMPORTANT]
 > **🏷️ FR · Fonctionnalités**
@@ -26,7 +24,6 @@
 > - 🎛️ Interface admin Compose : démarrage/arrêt, port, qualité JPEG, caméra avant/arrière, mode veille
 > - 🌐 Détection réseau : Wi-Fi, SSID, IP locale, URL viewer, URL flux, URL batterie
 > - 🔋 Monitoring batterie temps réel avec `isCharging`, température et timestamp
-> - 🖼️ Gestion des images : sauvegarde, liste, suppression unitaire et purge totale
 > - 🧠 Service foreground `MjpegStreamingService` avec WakeLock CPU optionnel
 
 > [!NOTE]
@@ -91,14 +88,6 @@ flowchart LR
 > **API JSON**
 > - `GET /api/status` → statut serveur/stream
 > - `GET /api/battery` → batterie temps réel
-> - `GET|POST /api/battery/charge?enabled=0` → arrêter la charge (`{"ok":true,"charging":false}`)
-> - `GET|POST /api/battery/charge?enabled=1` → reprendre la charge (`{"ok":true,"charging":true}`)
->
-> **API images**
-> - `GET|POST /api/image/save` → sauvegarde la dernière frame
-> - `GET /api/image/list` → liste des images sauvegardées
-> - `GET|POST /api/image/delete?name=<fichier>` → suppression d'une image
-> - `GET|POST /api/image/clear` → suppression de toutes les images
 
 ### Exemple `GET /api/battery`
 
@@ -112,21 +101,8 @@ flowchart LR
 }
 ```
 
-### Exemple `POST /api/battery/charge?enabled=0` — arrêt de la charge
-
-```json
-{ "ok": true, "charging": false }
-```
-
-> Réponse en cas de device non supporté (non-rooté sans ADB) :
-> ```json
-> { "ok": false, "code": 503, "charging": false }
-> ```
-
-> Réponse si l'endpoint n'est pas activé (serveur sans `chargingControlProvider`) :
-> ```json
-> { "ok": false, "code": 501, "message": "not_supported" }
-> ```
+> [!TIP]
+> **🏷️ FR · Usage rapide**
 > 1. Installer et lancer l'application sur le téléphone.
 > 2. Donner les permissions caméra/localisation demandées.
 > 3. Dans l'admin, vérifier ou modifier le port puis appuyer sur **Démarrer**.
@@ -195,7 +171,6 @@ flowchart LR
 > - Favicon : `http://<ip-telephone>:<port>/favicon.ico`
 > - Status JSON : `http://<ip-telephone>:<port>/api/status`
 > - Batterie JSON : `http://<ip-telephone>:<port>/api/battery`
-> - Images JSON : `http://<ip-telephone>:<port>/api/image/list`
 
 > [!TIP]
 > **🏷️ FR · Build local**
@@ -234,9 +209,7 @@ adb -s <device-serial> install -r $apk
 > - MJPEG stream: `GET /stream.mjpeg`
 > - Snapshot: `GET /snapshot.jpg`
 > - Battery: `GET /api/battery`
-> - Charge control: `GET|POST /api/battery/charge?enabled=0|1`
 > - Status: `GET /api/status`
-> - Images: `GET|POST /api/image/save`, `GET /api/image/list`, `GET|POST /api/image/delete?name=<file>`, `GET|POST /api/image/clear`
 
 > [!IMPORTANT]
 > **🏷️ EN · Features**
@@ -245,7 +218,6 @@ adb -s <device-serial> install -r $apk
 > - 🎛️ Compose admin UI: start/stop, port, JPEG quality, front/rear camera, keep-awake mode
 > - 🌐 Network detection: Wi-Fi, SSID, local IP, viewer URL, stream URL, battery API URL
 > - 🔋 Real-time battery monitoring with charging state, temperature, and timestamp
-> - 🖼️ Image management API for save/list/delete/clear
 > - 🧠 Foreground service `MjpegStreamingService` with optional CPU WakeLock
 
 > [!NOTE]
@@ -300,8 +272,6 @@ flowchart LR
 > - Snapshot: `GET /snapshot.jpg`
 > - Favicon: `GET /favicon.ico`
 > - JSON: `GET /api/status`, `GET /api/battery`
-> - Charge control: `GET|POST /api/battery/charge?enabled=0` (stop) / `?enabled=1` (resume)
-> - Images: `GET|POST /api/image/save`, `GET /api/image/list`, `GET|POST /api/image/delete?name=<file>`, `GET|POST /api/image/clear`
 
 ### Example `GET /api/battery`
 
@@ -315,21 +285,6 @@ flowchart LR
 }
 ```
 
-### Example `POST /api/battery/charge?enabled=0` — stop charging
-
-```json
-{ "ok": true, "charging": false }
-```
-
-> Response when device does not support charging control (non-rooted, no ADB):
-> ```json
-> { "ok": false, "code": 503, "charging": false }
-> ```
-
-> Response when endpoint is not enabled (`chargingControlProvider` not set):
-> ```json
-> { "ok": false, "code": 501, "message": "not_supported" }
-> ```
 
 > [!TIP]
 > **🏷️ EN · Quick start**

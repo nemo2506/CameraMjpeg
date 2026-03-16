@@ -21,10 +21,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 class MjpegHttpServer(
     private val port: Int,
     private val frameStore: FrameStore,
-    private val imageManagementService: ImageManagementService,
     private val batteryStatusProvider: () -> BatteryStatus?,
-    private val faviconProvider: () -> ByteArray?,
-    private val chargingControlProvider: ((Boolean) -> Boolean)? = null
+    private val faviconProvider: () -> ByteArray?
 ) {
     private val tag = "MjpegHttpServer"
     private var scope: CoroutineScope = newScope()
@@ -104,11 +102,6 @@ class MjpegHttpServer(
                     path.startsWith("/snapshot.jpg") -> snapshot(socket)
                     path == "/api/status" -> status(socket)
                     path == "/api/battery" -> battery(socket)
-                    path == "/api/battery/charge" && (method == "POST" || method == "GET") -> chargeControl(socket, query["enabled"])
-                    path == "/api/image/save" && (method == "POST" || method == "GET") -> saveImage(socket)
-                    path == "/api/image/list" -> listImages(socket)
-                    path == "/api/image/delete" && (method == "POST" || method == "GET") -> deleteImage(socket, query["name"])
-                    path == "/api/image/clear" && (method == "POST" || method == "GET") -> clearImages(socket)
                     else -> monitorPage(socket)
                 }
             }
@@ -158,10 +151,6 @@ class MjpegHttpServer(
             .snapshot-btn{width:44px;height:44px;border:1px solid #3e4d66;border-radius:10px;background:#1d2532;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
             .snapshot-btn:hover{background:#263246}
             .snapshot-btn svg{width:20px;height:20px;fill:#d8deea}
-            .charge-on{border-color:#6a5120!important}
-            .charge-on svg{fill:#ffd892!important}
-            .charge-off{border-color:#28553c!important}
-            .charge-off svg{fill:#b9f4cb!important}
             .tech{display:flex;gap:14px;font-size:14px;font-variant-numeric:tabular-nums}
             .chip{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #2c3748;border-radius:8px;background:#111824}
             .chip svg{width:14px;height:14px;fill:#8fb8ff}
@@ -179,9 +168,6 @@ class MjpegHttpServer(
               <div class="bottom-frame">
                 <button class="snapshot-btn" onclick="window.open('/snapshot.jpg','_blank')" title="Snapshot" aria-label="Snapshot">
                   <svg viewBox="0 0 24 24"><path d="M9 4l-2 2H4v14h16V6h-3l-2-2zm3 4a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg>
-                </button>
-                <button class="snapshot-btn charge-on" id="charge-btn" onclick="toggleCharging()" title="Stop charging" aria-label="Charge control">
-                  <svg viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
                 </button>
                 <div class="tech">
                   <div class="chip"><svg viewBox="0 0 24 24"><path d="M12 3l9 4v6c0 5-3.5 8.8-9 9-5.5-.2-9-4-9-9V7l9-4z"/></svg><span id="fps">0 fps</span></div>
@@ -219,7 +205,6 @@ class MjpegHttpServer(
                 if (b.levelPercent < 20) chip.className = 'chip chip-low';
                 else if (b.levelPercent < 50) chip.className = 'chip chip-mid';
                 else chip.className = 'chip chip-ok';
-                if (typeof b.isCharging === 'boolean') setChargeBtn(b.isCharging);
               } catch (_) {
                 document.getElementById('battery').textContent = 'batterie --';
                 document.getElementById('battery-chip').className = 'chip chip-muted';
@@ -237,29 +222,6 @@ class MjpegHttpServer(
             setInterval(refreshStatus, 1000);
             setInterval(refreshBattery, 5000);
             setInterval(refreshResolution, 1000);
-            var chargingActive = true;
-            function setChargeBtn(active) {
-              chargingActive = active;
-              var btn = document.getElementById('charge-btn');
-              if (!btn) return;
-              btn.className = 'snapshot-btn ' + (active ? 'charge-on' : 'charge-off');
-              btn.title = active ? 'Stop charging' : 'Resume charging';
-            }
-            async function toggleCharging() {
-              var next = !chargingActive;
-              var btn = document.getElementById('charge-btn');
-              if (btn) btn.style.opacity = '0.5';
-              var r = await api('/api/battery/charge?enabled=' + (next ? '1' : '0'), {method:'POST'});
-              if (btn) btn.style.opacity = '1';
-              if (r && r.ok) {
-                setChargeBtn(next);
-              } else {
-                var prev = chargingActive;
-                setChargeBtn(prev);
-                if (btn) { btn.style.borderColor = '#6f2f38'; setTimeout(function(){ setChargeBtn(prev); }, 1200); }
-              }
-              setTimeout(refreshBattery, 1200);
-            }
             </script>
             </body>
             </html>
@@ -279,7 +241,6 @@ class MjpegHttpServer(
               "fps":$fpsEstimate,
               "uptimeSec":$uptime,
               "latestFrameBytes":${latest?.size ?: 0},
-              "savedCount":${imageManagementService.count()},
               "totalFrames":$totalFramesSent,
               "totalBytes":$totalBytesSent
             }
@@ -310,20 +271,6 @@ class MjpegHttpServer(
         sendText(socket, 200, "application/json; charset=utf-8", json)
     }
 
-    private fun chargeControl(socket: Socket, enabledParam: String?) {
-        val provider = chargingControlProvider
-        if (provider == null) {
-            sendText(socket, 501, "application/json; charset=utf-8",
-                "{\"ok\":false,\"code\":501,\"message\":\"not_supported\"}")
-            return
-        }
-        val enable = enabledParam != "0" && enabledParam != "false"
-        val ok = provider(enable)
-        val code = if (ok) 200 else 503
-        sendText(socket, code, "application/json; charset=utf-8",
-            "{\"ok\":$ok,\"charging\":$enable}")
-    }
-
     private fun favicon(socket: Socket) {
         val icon = faviconProvider()
         if (icon == null || icon.isEmpty()) {
@@ -331,37 +278,6 @@ class MjpegHttpServer(
             return
         }
         sendBytes(socket, 200, "image/png", icon)
-    }
-
-    private fun saveImage(socket: Socket) {
-        val saved = imageManagementService.saveLatest(frameStore)
-        if (saved == null) {
-            sendText(socket, 503, "application/json; charset=utf-8", "{\"ok\":false,\"code\":503}")
-            return
-        }
-        val json = "{\"ok\":true,\"name\":\"${escapeJson(saved.name)}\",\"size\":${saved.sizeBytes}}"
-        sendText(socket, 200, "application/json; charset=utf-8", json)
-    }
-
-    private fun listImages(socket: Socket) {
-        val items = imageManagementService.list()
-            .joinToString(",") { "{\"name\":\"${escapeJson(it.name)}\",\"size\":${it.sizeBytes},\"modifiedAt\":${it.modifiedAt}}" }
-        sendText(socket, 200, "application/json; charset=utf-8", "{\"ok\":true,\"items\":[${items}]}")
-    }
-
-    private fun deleteImage(socket: Socket, name: String?) {
-        if (name.isNullOrBlank()) {
-            sendText(socket, 400, "application/json; charset=utf-8", "{\"ok\":false,\"code\":400}")
-            return
-        }
-        val ok = imageManagementService.delete(name)
-        val code = if (ok) 200 else 404
-        sendText(socket, code, "application/json; charset=utf-8", "{\"ok\":$ok}")
-    }
-
-    private fun clearImages(socket: Socket) {
-        val deleted = imageManagementService.clear()
-        sendText(socket, 200, "application/json; charset=utf-8", "{\"ok\":true,\"deleted\":$deleted}")
     }
 
     private fun snapshot(socket: Socket) {
@@ -599,4 +515,3 @@ data class BatteryStatus(
     val temperatureC: Float?,
     val timestampMs: Long
 )
-
