@@ -1,111 +1,211 @@
-# CameraMjpeg (v1)
+# 📷 CameraMjpeg
 
-## Francais (FR)
+![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white)
+![Kotlin](https://img.shields.io/badge/Kotlin-JVM%2011-7F52FF?logo=kotlin&logoColor=white)
+![Stream](https://img.shields.io/badge/Stream-MJPEG-0A84FF)
+![Service](https://img.shields.io/badge/Service-Foreground-FF9F0A)
 
-Application Android de streaming camera en MJPEG avec serveur HTTP integre.
+> [!NOTE]
+> **🏷️ FR · Vue d'ensemble**
+> Application Android de streaming caméra en **MJPEG** avec **serveur HTTP embarqué**. Le téléphone capture les images, les compresse en JPEG, puis les expose sur le réseau local via un viewer web, un flux brut et plusieurs endpoints JSON utiles au monitoring.
 
-### Fonctionnalites
+> [!TIP]
+> **🏷️ FR · Accès rapide**
+> - Viewer : `GET /`, `GET /viewer`, `GET /monitor`
+> - Flux MJPEG : `GET /stream.mjpeg`
+> - Snapshot : `GET /snapshot.jpg`
+> - Batterie : `GET /api/battery`
+> - Charge : `GET|POST /api/battery/charge?enabled=0|1`
+> - Statut : `GET /api/status`
+> - Images : `GET|POST /api/image/save`, `GET /api/image/list`, `GET|POST /api/image/delete?name=<fichier>`, `GET|POST /api/image/clear`
 
-- Streaming MJPEG depuis le telephone Android via `GET /stream.mjpeg`.
-- Viewer web integre sur `GET /`, `GET /viewer` et `GET /monitor`.
-- Interface admin Compose: demarrage/arret, port, qualite JPEG, camera avant/arriere, mode veille.
-- Port configurable et applique en direct.
-- Detection reseau: Wi-Fi, SSID, IP locale, URL de flux, URL viewer, URL API batterie.
-- Monitoring web avec cadre bas (snapshot, FPS, resolution, batterie).
-- Endpoint batterie JSON temps reel `GET /api/battery` (champ `charging: true/false`).
-- Endpoint statut `GET /api/status` (clients, fps, uptime, tailles/compteurs).
-- API de gestion des images (`save`, `list`, `delete`, `clear`).
-- Service foreground Android `MjpegStreamingService` avec WakeLock CPU.
+> [!IMPORTANT]
+> **🏷️ FR · Fonctionnalités**
+> - 📡 Streaming MJPEG depuis le téléphone Android via `GET /stream.mjpeg`
+> - 🖥️ Viewer web intégré sur `GET /`, `GET /viewer` et `GET /monitor`
+> - 🎛️ Interface admin Compose : démarrage/arrêt, port, qualité JPEG, caméra avant/arrière, mode veille
+> - 🌐 Détection réseau : Wi-Fi, SSID, IP locale, URL viewer, URL flux, URL batterie
+> - 🔋 Monitoring batterie temps réel avec `isCharging`, température et timestamp
+> - 🖼️ Gestion des images : sauvegarde, liste, suppression unitaire et purge totale
+> - 🧠 Service foreground `MjpegStreamingService` avec WakeLock CPU optionnel
 
-### SDK et compatibilite Android
+> [!NOTE]
+> **🏷️ FR · Architecture dessinée**
+> **Flux réel dans le code** : `AdminViewModel` démarre `MjpegStreamingService`, le service initialise `CameraStreamController`, publie les JPEG dans `FrameStore`, puis `MjpegHttpServer` sert le viewer, le flux MJPEG, les snapshots, les métriques et l'API batterie.
 
-Configuration dans `app/build.gradle.kts`:
+```mermaid
+flowchart LR
+    A[📱 MainActivity<br/>UI Compose] --> B[🧭 AdminViewModel]
+    B --> C[⚙️ SettingsRepository]
+    B --> D[🌐 NetworkRepository]
+    B -->|start/stop/update| E[🔔 MjpegStreamingService]
+    E --> F[📷 CameraStreamController]
+    F -->|JPEG frames| G[(🗂️ FrameStore)]
+    E --> H[🖼️ ImageManagementService]
+    E --> I[🔋 Battery tracker]
+    E --> J[🌍 MjpegHttpServer]
+    J --> G
+    J --> H
+    J --> I
+    K[💻 Navigateur local / Apache] -->|HTTP| J
+    J -->|viewer, stream, JSON API| K
+```
 
-- `versionName`: `1.0`
-- `versionCode`: `1`
-- `minSdk`: `24` (Android 7.0+)
-- `targetSdk`: `36`
-- `compileSdk`: `36`
-- Java/Kotlin JVM target: `11`
+> [!TIP]
+> **🏷️ FR · SDK & compatibilité Android**
+> Configuration actuelle dans `app/build.gradle.kts` :
+> - `versionName`: `1.0`
+> - `versionCode`: `1`
+> - `minSdk`: `24` (Android 7.0+)
+> - `targetSdk`: `36`
+> - `compileSdk`: `36`
+> - Java/Kotlin JVM target : `11`
 
-Permissions principales dans `app/src/main/AndroidManifest.xml`:
+> [!IMPORTANT]
+> **🏷️ FR · Permissions manifest**
+> Permissions principales présentes dans `app/src/main/AndroidManifest.xml` :
+> - `android.permission.CAMERA`
+> - `android.permission.INTERNET`
+> - `android.permission.ACCESS_NETWORK_STATE`
+> - `android.permission.ACCESS_WIFI_STATE`
+> - `android.permission.ACCESS_FINE_LOCATION`
+> - `android.permission.ACCESS_COARSE_LOCATION`
+> - `android.permission.POST_NOTIFICATIONS`
+> - `android.permission.WAKE_LOCK`
+> - `android.permission.FOREGROUND_SERVICE`
+> - `android.permission.FOREGROUND_SERVICE_CAMERA`
 
-- `android.permission.CAMERA`
-- `android.permission.INTERNET`
-- `android.permission.ACCESS_NETWORK_STATE`
-- `android.permission.ACCESS_WIFI_STATE`
-- `android.permission.ACCESS_FINE_LOCATION`
-- `android.permission.ACCESS_COARSE_LOCATION`
-- `android.permission.WAKE_LOCK`
-- `android.permission.FOREGROUND_SERVICE`
-- `android.permission.FOREGROUND_SERVICE_CAMERA`
+> [!NOTE]
+> **🏷️ FR · Endpoints HTTP**
+>
+> **Pages**
+> - `GET /` → page monitoring/viewer
+> - `GET /viewer` → page monitoring/viewer
+> - `GET /monitor` → page monitoring/viewer
+>
+> **Flux & snapshots**
+> - `GET /stream.mjpeg` → flux MJPEG multipart
+> - `GET /snapshot.jpg` → image JPEG instantanée
+> - `GET /favicon.ico` → favicon PNG du viewer
+>
+> **API JSON**
+> - `GET /api/status` → statut serveur/stream
+> - `GET /api/battery` → batterie temps réel
+> - `GET|POST /api/battery/charge?enabled=0` → arrêter la charge (`{"ok":true,"charging":false}`)
+> - `GET|POST /api/battery/charge?enabled=1` → reprendre la charge (`{"ok":true,"charging":true}`)
+>
+> **API images**
+> - `GET|POST /api/image/save` → sauvegarde la dernière frame
+> - `GET /api/image/list` → liste des images sauvegardées
+> - `GET|POST /api/image/delete?name=<fichier>` → suppression d'une image
+> - `GET|POST /api/image/clear` → suppression de toutes les images
 
-### Endpoints HTTP
-
-Pages:
-
-- `GET /` -> page monitoring/viewer
-- `GET /viewer` -> page monitoring/viewer
-- `GET /monitor` -> page monitoring/viewer
-
-Flux et snapshots:
-
-- `GET /stream.mjpeg` -> flux MJPEG multipart
-- `GET /snapshot.jpg` -> image JPEG instantanee
-
-API JSON:
-
-- `GET /api/status` -> statut serveur/stream
-- `GET /api/battery` -> batterie en temps reel (`charging: true/false`)
-
-Exemple `GET /api/battery`:
+### Exemple `GET /api/battery`
 
 ```json
 {
   "ok": true,
   "levelPercent": 82,
-  "charging": true,
+  "isCharging": true,
   "temperatureC": 31.4,
   "timestampMs": 1773571200000
 }
 ```
 
-API images:
+### Exemple `POST /api/battery/charge?enabled=0` — arrêt de la charge
 
-- `GET|POST /api/image/save` -> sauvegarde la derniere frame
-- `GET /api/image/list` -> liste des images sauvegardees
-- `GET|POST /api/image/delete?name=<fichier>` -> suppression d'une image
-- `GET|POST /api/image/clear` -> suppression de toutes les images
+```json
+{ "ok": true, "charging": false }
+```
 
-### Usage rapide
+> Réponse en cas de device non supporté (non-rooté sans ADB) :
+> ```json
+> { "ok": false, "code": 503, "charging": false }
+> ```
 
-1. Installer et lancer l'application sur le telephone.
-2. Donner les permissions camera/localisation demandees par l'app.
-3. Dans l'admin, verifier ou modifier le port puis appuyer sur demarrer.
-4. Recuperer l'IP locale affichee dans la section reseau.
-5. Ouvrir un navigateur sur le meme reseau:
-   - `http://<ip-telephone>:<port>/` (monitoring)
-   - `http://<ip-telephone>:<port>/stream.mjpeg` (flux brut)
-6. Verifier la batterie via `http://<ip-telephone>:<port>/api/battery`.
+> Réponse si l'endpoint n'est pas activé (serveur sans `chargingControlProvider`) :
+> ```json
+> { "ok": false, "code": 501, "message": "not_supported" }
+> ```
+> 1. Installer et lancer l'application sur le téléphone.
+> 2. Donner les permissions caméra/localisation demandées.
+> 3. Dans l'admin, vérifier ou modifier le port puis appuyer sur **Démarrer**.
+> 4. Récupérer l'IP locale affichée dans la section réseau.
+> 5. Ouvrir un navigateur sur le même réseau :
+>    - `http://<ip-telephone>:<port>/` pour le monitoring
+>    - `http://<ip-telephone>:<port>/stream.mjpeg` pour le flux brut
+> 6. Vérifier l'API batterie sur `http://<ip-telephone>:<port>/api/battery`.
 
-Endpoints utiles en usage:
+> [!IMPORTANT]
+> **🏷️ FR · Exemple Apache VirtualHost vers l'IP locale du téléphone**
+> Utilisez l'IP locale affichée par l'application, par exemple `192.168.1.50:8080`.
+>
+> **Option A — redirection simple vers l'IP locale**
+>
+> ```apache
+> <VirtualHost *:80>
+>     ServerName camera.example.local
+>
+>     Redirect "/" "http://192.168.1.50:8080/"
+> </VirtualHost>
+> ```
+>
+> **Option B — reverse proxy complet recommandé**
+>
+> ```apache
+> # Modules utiles : proxy proxy_http headers rewrite
+> <VirtualHost *:80>
+>     ServerName camera.example.local
+>
+>     ProxyPreserveHost On
+>     ProxyRequests Off
+>
+>     RequestHeader set X-Forwarded-Proto "http"
+>     RequestHeader set X-Forwarded-Host "camera.example.local"
+>
+>     ProxyPass        /stream.mjpeg  http://192.168.1.50:8080/stream.mjpeg retry=0 connectiontimeout=5 timeout=300 keepalive=On
+>     ProxyPassReverse /stream.mjpeg  http://192.168.1.50:8080/stream.mjpeg
+>
+>     ProxyPass        /snapshot.jpg  http://192.168.1.50:8080/snapshot.jpg
+>     ProxyPassReverse /snapshot.jpg  http://192.168.1.50:8080/snapshot.jpg
+>
+>     ProxyPass        /favicon.ico   http://192.168.1.50:8080/favicon.ico
+>     ProxyPassReverse /favicon.ico   http://192.168.1.50:8080/favicon.ico
+>
+>     ProxyPass        /api/          http://192.168.1.50:8080/api/
+>     ProxyPassReverse /api/          http://192.168.1.50:8080/api/
+>
+>     ProxyPass        /              http://192.168.1.50:8080/
+>     ProxyPassReverse /              http://192.168.1.50:8080/
+> </VirtualHost>
+> ```
+>
+> **URL exposées par Apache** :
+> - `http://camera.example.local/`
+> - `http://camera.example.local/stream.mjpeg`
+> - `http://camera.example.local/snapshot.jpg`
+> - `http://camera.example.local/api/status`
+> - `http://camera.example.local/api/battery`
 
-- Viewer: `http://<ip-telephone>:<port>/`, `http://<ip-telephone>:<port>/viewer`, `http://<ip-telephone>:<port>/monitor`
-- Flux: `http://<ip-telephone>:<port>/stream.mjpeg`
-- Snapshot: `http://<ip-telephone>:<port>/snapshot.jpg`
-- Favicon: `http://<ip-telephone>:<port>/favicon.ico`
-- Status JSON: `http://<ip-telephone>:<port>/api/status`
-- Batterie JSON: `http://<ip-telephone>:<port>/api/battery`
-- Images JSON: `http://<ip-telephone>:<port>/api/image/list`
+> [!NOTE]
+> **🏷️ FR · Endpoints utiles en usage**
+> - Viewer : `http://<ip-telephone>:<port>/`, `http://<ip-telephone>:<port>/viewer`, `http://<ip-telephone>:<port>/monitor`
+> - Flux : `http://<ip-telephone>:<port>/stream.mjpeg`
+> - Snapshot : `http://<ip-telephone>:<port>/snapshot.jpg`
+> - Favicon : `http://<ip-telephone>:<port>/favicon.ico`
+> - Status JSON : `http://<ip-telephone>:<port>/api/status`
+> - Batterie JSON : `http://<ip-telephone>:<port>/api/battery`
+> - Images JSON : `http://<ip-telephone>:<port>/api/image/list`
 
-### Build local
+> [!TIP]
+> **🏷️ FR · Build local**
 
 ```powershell
 Set-Location "D:\PATH\TO\CameraMjpeg"
 .\gradlew.bat :app:assembleDebug
 ```
 
-Installation debug ciblee sur un device ADB:
+Installation debug ciblée sur un device ADB :
 
 ```powershell
 $apk = "D:\PATH\TO\CameraMjpeg\app\build\intermediates\apk\debug\app-debug.apk"
@@ -113,113 +213,159 @@ adb devices
 adb -s <device-serial> install -r $apk
 ```
 
-### Notes d'usage
-
-- Le titre HTML du viewer utilise dynamiquement le modele du telephone.
-- Si `INSTALL_FAILED_USER_RESTRICTED` apparait: activer `Installation via USB` dans les options developpeur du telephone.
-- Si `INSTALL_FAILED_OLDER_SDK` apparait: le telephone est en dessous de `minSdk 24`.
+> [!WARNING]
+> **🏷️ FR · Notes d'usage & vérification README**
+> - Le titre HTML du viewer utilise dynamiquement le modèle du téléphone.
+> - Si `INSTALL_FAILED_USER_RESTRICTED` apparaît : activer **Installation via USB** dans les options développeur.
+> - Si `INSTALL_FAILED_OLDER_SDK` apparaît : le téléphone est en dessous de `minSdk 24`.
+> - Vérifier après édition : rendu des callouts, affichage du diagramme Mermaid, cohérence de l'IP/port Apache, et exactitude des endpoints documentés.
 
 ---
 
-## English (EN)
+## 🌍 English (EN)
 
-Android app for MJPEG camera streaming with an embedded HTTP server.
+> [!NOTE]
+> **🏷️ EN · Overview**
+> Android app for **MJPEG camera streaming** with an **embedded HTTP server**. The phone captures frames, compresses them to JPEG, and exposes a local web viewer, raw stream, snapshots, and JSON monitoring endpoints.
 
-### Features
+> [!TIP]
+> **🏷️ EN · Quick access**
+> - Viewer: `GET /`, `GET /viewer`, `GET /monitor`
+> - MJPEG stream: `GET /stream.mjpeg`
+> - Snapshot: `GET /snapshot.jpg`
+> - Battery: `GET /api/battery`
+> - Charge control: `GET|POST /api/battery/charge?enabled=0|1`
+> - Status: `GET /api/status`
+> - Images: `GET|POST /api/image/save`, `GET /api/image/list`, `GET|POST /api/image/delete?name=<file>`, `GET|POST /api/image/clear`
 
-- MJPEG streaming from Android phone via `GET /stream.mjpeg`.
-- Built-in web viewer on `GET /`, `GET /viewer`, and `GET /monitor`.
-- Compose admin UI: start/stop, port, JPEG quality, front/rear camera, keep-awake mode.
-- Configurable port applied live.
-- Network detection: Wi-Fi, SSID, local IP, stream URL, viewer URL, battery API URL.
-- Web monitoring bottom frame (snapshot, FPS, resolution, battery).
-- Real-time battery JSON endpoint `GET /api/battery` (field `charging: true/false`).
-- Status endpoint `GET /api/status` (clients, fps, uptime, counters/sizes).
-- Image management API (`save`, `list`, `delete`, `clear`).
-- Android foreground service `MjpegStreamingService` with CPU WakeLock.
+> [!IMPORTANT]
+> **🏷️ EN · Features**
+> - 📡 MJPEG streaming from the Android phone via `GET /stream.mjpeg`
+> - 🖥️ Built-in viewer on `GET /`, `GET /viewer`, and `GET /monitor`
+> - 🎛️ Compose admin UI: start/stop, port, JPEG quality, front/rear camera, keep-awake mode
+> - 🌐 Network detection: Wi-Fi, SSID, local IP, viewer URL, stream URL, battery API URL
+> - 🔋 Real-time battery monitoring with charging state, temperature, and timestamp
+> - 🖼️ Image management API for save/list/delete/clear
+> - 🧠 Foreground service `MjpegStreamingService` with optional CPU WakeLock
 
-### Android SDK and compatibility
+> [!NOTE]
+> **🏷️ EN · Architecture diagram**
 
-Current configuration in `app/build.gradle.kts`:
+```mermaid
+flowchart LR
+    A[📱 MainActivity<br/>Compose UI] --> B[🧭 AdminViewModel]
+    B --> C[⚙️ SettingsRepository]
+    B --> D[🌐 NetworkRepository]
+    B -->|start/stop/update| E[🔔 MjpegStreamingService]
+    E --> F[📷 CameraStreamController]
+    F -->|JPEG frames| G[(🗂️ FrameStore)]
+    E --> H[🖼️ ImageManagementService]
+    E --> I[🔋 Battery tracker]
+    E --> J[🌍 MjpegHttpServer]
+    J --> G
+    J --> H
+    J --> I
+    K[💻 Browser / Apache] -->|HTTP| J
+    J -->|viewer, stream, JSON API| K
+```
 
-- `versionName`: `1.0`
-- `versionCode`: `1`
-- `minSdk`: `24` (Android 7.0+)
-- `targetSdk`: `36`
-- `compileSdk`: `36`
-- Java/Kotlin JVM target: `11`
+> [!TIP]
+> **🏷️ EN · Android SDK & compatibility**
+> Current configuration in `app/build.gradle.kts`:
+> - `versionName`: `1.0`
+> - `versionCode`: `1`
+> - `minSdk`: `24` (Android 7.0+)
+> - `targetSdk`: `36`
+> - `compileSdk`: `36`
+> - Java/Kotlin JVM target: `11`
 
-Main permissions in `app/src/main/AndroidManifest.xml`:
+> [!IMPORTANT]
+> **🏷️ EN · Manifest permissions**
+> Main permissions declared in `app/src/main/AndroidManifest.xml`:
+> - `android.permission.CAMERA`
+> - `android.permission.INTERNET`
+> - `android.permission.ACCESS_NETWORK_STATE`
+> - `android.permission.ACCESS_WIFI_STATE`
+> - `android.permission.ACCESS_FINE_LOCATION`
+> - `android.permission.ACCESS_COARSE_LOCATION`
+> - `android.permission.POST_NOTIFICATIONS`
+> - `android.permission.WAKE_LOCK`
+> - `android.permission.FOREGROUND_SERVICE`
+> - `android.permission.FOREGROUND_SERVICE_CAMERA`
 
-- `android.permission.CAMERA`
-- `android.permission.INTERNET`
-- `android.permission.ACCESS_NETWORK_STATE`
-- `android.permission.ACCESS_WIFI_STATE`
-- `android.permission.ACCESS_FINE_LOCATION`
-- `android.permission.ACCESS_COARSE_LOCATION`
-- `android.permission.WAKE_LOCK`
-- `android.permission.FOREGROUND_SERVICE`
-- `android.permission.FOREGROUND_SERVICE_CAMERA`
+> [!NOTE]
+> **🏷️ EN · HTTP endpoints**
+> - Pages: `GET /`, `GET /viewer`, `GET /monitor`
+> - Stream: `GET /stream.mjpeg`
+> - Snapshot: `GET /snapshot.jpg`
+> - Favicon: `GET /favicon.ico`
+> - JSON: `GET /api/status`, `GET /api/battery`
+> - Charge control: `GET|POST /api/battery/charge?enabled=0` (stop) / `?enabled=1` (resume)
+> - Images: `GET|POST /api/image/save`, `GET /api/image/list`, `GET|POST /api/image/delete?name=<file>`, `GET|POST /api/image/clear`
 
-### HTTP endpoints
-
-Pages:
-
-- `GET /` -> monitoring/viewer page
-- `GET /viewer` -> monitoring/viewer page
-- `GET /monitor` -> monitoring/viewer page
-
-Stream and snapshots:
-
-- `GET /stream.mjpeg` -> multipart MJPEG stream
-- `GET /snapshot.jpg` -> current JPEG snapshot
-
-JSON APIs:
-
-- `GET /api/status` -> server/stream status
-- `GET /api/battery` -> real-time battery (`charging: true/false`)
-
-Example `GET /api/battery`:
+### Example `GET /api/battery`
 
 ```json
 {
   "ok": true,
   "levelPercent": 82,
-  "charging": true,
+  "isCharging": true,
   "temperatureC": 31.4,
   "timestampMs": 1773571200000
 }
 ```
 
-Image APIs:
+### Example `POST /api/battery/charge?enabled=0` — stop charging
 
-- `GET|POST /api/image/save` -> save latest frame
-- `GET /api/image/list` -> list saved images
-- `GET|POST /api/image/delete?name=<file>` -> delete one image
-- `GET|POST /api/image/clear` -> delete all images
+```json
+{ "ok": true, "charging": false }
+```
 
-### Quick start
+> Response when device does not support charging control (non-rooted, no ADB):
+> ```json
+> { "ok": false, "code": 503, "charging": false }
+> ```
 
-1. Install and launch the app on the phone.
-2. Grant camera/location permissions requested by the app.
-3. In admin screen, verify or change port then tap start.
-4. Get the local IP shown in the network section.
-5. Open a browser on the same network:
-   - `http://<phone-ip>:<port>/` (monitoring)
-   - `http://<phone-ip>:<port>/stream.mjpeg` (raw stream)
-6. Check battery endpoint at `http://<phone-ip>:<port>/api/battery`.
+> Response when endpoint is not enabled (`chargingControlProvider` not set):
+> ```json
+> { "ok": false, "code": 501, "message": "not_supported" }
+> ```
 
-Useful endpoints during usage:
+> [!TIP]
+> **🏷️ EN · Quick start**
+> 1. Install and launch the app on the phone.
+> 2. Grant the requested camera/location permissions.
+> 3. In the admin screen, verify or change the port, then tap **Start**.
+> 4. Copy the local IP displayed in the network section.
+> 5. Open a browser on the same network:
+>    - `http://<phone-ip>:<port>/`
+>    - `http://<phone-ip>:<port>/stream.mjpeg`
+> 6. Check battery status on `http://<phone-ip>:<port>/api/battery`.
 
-- Viewer: `http://<phone-ip>:<port>/`, `http://<phone-ip>:<port>/viewer`, `http://<phone-ip>:<port>/monitor`
-- Stream: `http://<phone-ip>:<port>/stream.mjpeg`
-- Snapshot: `http://<phone-ip>:<port>/snapshot.jpg`
-- Favicon: `http://<phone-ip>:<port>/favicon.ico`
-- Status JSON: `http://<phone-ip>:<port>/api/status`
-- Battery JSON: `http://<phone-ip>:<port>/api/battery`
-- Images JSON: `http://<phone-ip>:<port>/api/image/list`
+> [!IMPORTANT]
+> **🏷️ EN · Apache VirtualHost example to the phone local IP**
+> Replace `192.168.1.50:8080` with the local address shown in the app.
+>
+> ```apache
+> <VirtualHost *:80>
+>     ServerName camera.example.local
+>
+>     ProxyPreserveHost On
+>     ProxyRequests Off
+>
+>     ProxyPass        /stream.mjpeg  http://192.168.1.50:8080/stream.mjpeg retry=0 connectiontimeout=5 timeout=300 keepalive=On
+>     ProxyPassReverse /stream.mjpeg  http://192.168.1.50:8080/stream.mjpeg
+>
+>     ProxyPass        /api/          http://192.168.1.50:8080/api/
+>     ProxyPassReverse /api/          http://192.168.1.50:8080/api/
+>
+>     ProxyPass        /              http://192.168.1.50:8080/
+>     ProxyPassReverse /              http://192.168.1.50:8080/
+> </VirtualHost>
+> ```
 
-### Local build
+> [!TIP]
+> **🏷️ EN · Local build**
 
 ```powershell
 Set-Location "D:\PATH\TO\CameraMjpeg"
@@ -234,9 +380,8 @@ adb devices
 adb -s <device-serial> install -r $apk
 ```
 
-### Usage notes
-
-- The viewer HTML title uses dynamic phone model detection.
-- If `INSTALL_FAILED_USER_RESTRICTED` appears, enable `Install via USB` in Developer options.
-- If `INSTALL_FAILED_OLDER_SDK` appears, the phone is below `minSdk 24`.
-
+> [!WARNING]
+> **🏷️ EN · Usage notes**
+> - The viewer HTML title uses dynamic phone model detection.
+> - If `INSTALL_FAILED_USER_RESTRICTED` appears, enable **Install via USB** in Developer options.
+> - If `INSTALL_FAILED_OLDER_SDK` appears, the device is below `minSdk 24`.

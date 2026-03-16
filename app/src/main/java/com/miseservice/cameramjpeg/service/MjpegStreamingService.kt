@@ -100,6 +100,15 @@ class MjpegStreamingService : LifecycleService() {
         super.onDestroy()
     }
 
+    private fun setCharging(enabled: Boolean): Boolean {
+        return try {
+            val cmd = if (enabled) "dumpsys battery reset" else "dumpsys battery unplug"
+            Runtime.getRuntime().exec(cmd.split(" ").toTypedArray()).waitFor() == 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun startStreaming(port: Int, useFront: Boolean, quality: StreamQuality, keepAwake: Boolean) {
         server?.stop()
         server = MjpegHttpServer(
@@ -107,7 +116,8 @@ class MjpegStreamingService : LifecycleService() {
             frameStore = frameStore,
             imageManagementService = imageManagementService,
             batteryStatusProvider = { latestBatteryStatus },
-            faviconProvider = { faviconPngBytes }
+            faviconProvider = { faviconPngBytes },
+            chargingControlProvider = ::setCharging
         ).also { it.start() }
 
         streamController.start(useFront, quality.jpegQuality)
