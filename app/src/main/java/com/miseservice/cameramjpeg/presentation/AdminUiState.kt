@@ -17,6 +17,7 @@ data class AdminUiState(
     val batteryStatusLabel: String? = null,
     val batteryTemperatureC: Float? = null,
     val batteryApiUrl: String? = null,
+    val cameraFormatsApiUrl: String? = null,
     val streamUrl: String? = null,
     val viewerUrl: String? = null,
     val errorMessage: String? = null

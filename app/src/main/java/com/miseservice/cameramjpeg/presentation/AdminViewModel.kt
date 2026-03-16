@@ -82,6 +82,7 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 wifiSsid = network.wifiSsid,
                 isWifiConnected = network.isWifiConnected,
                 batteryApiUrl = network.batteryApiUrl,
+                cameraFormatsApiUrl = network.cameraFormatsApiUrl,
                 streamUrl = network.streamUrl,
                 viewerUrl = network.viewerUrl,
                 errorMessage = ssidError

@@ -103,6 +103,7 @@ fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
             batteryStatusLabel = uiState.batteryStatusLabel,
             batteryTemperatureC = uiState.batteryTemperatureC,
             batteryApiUrl = uiState.batteryApiUrl,
+            cameraFormatsApiUrl = uiState.cameraFormatsApiUrl,
             streamUrl = uiState.streamUrl,
             viewerUrl = uiState.viewerUrl,
             onRefresh = viewModel::refreshNetworkInfo,
@@ -255,6 +256,7 @@ private fun NetworkCard(
     batteryStatusLabel: String?,
     batteryTemperatureC: Float?,
     batteryApiUrl: String?,
+    cameraFormatsApiUrl: String?,
     streamUrl: String?,
     viewerUrl: String?,
     onRefresh: () -> Unit,
@@ -312,6 +314,7 @@ private fun NetworkCard(
                 color = batteryColor
             )
             UrlRow(label = "API Batterie (JSON)", value = batteryApiUrl, onCopy = onCopy)
+            UrlRow(label = "API Formats Camera (JSON)", value = cameraFormatsApiUrl, onCopy = onCopy)
             UrlRow(label = "Flux MJPEG", value = streamUrl, onCopy = onCopy)
             UrlRow(label = "Viewer", value = viewerUrl, onCopy = onCopy)
         }

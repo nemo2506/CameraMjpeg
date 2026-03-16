@@ -22,7 +22,8 @@ class MjpegHttpServer(
     private val port: Int,
     private val frameStore: FrameStore,
     private val batteryStatusProvider: () -> BatteryStatus?,
-    private val faviconProvider: () -> ByteArray?
+    private val faviconProvider: () -> ByteArray?,
+    private val cameraFormatsProvider: () -> String
 ) {
     private val tag = "MjpegHttpServer"
     private var scope: CoroutineScope = newScope()
@@ -102,6 +103,7 @@ class MjpegHttpServer(
                     path.startsWith("/snapshot.jpg") -> snapshot(socket)
                     path == "/api/status" -> status(socket)
                     path == "/api/battery" -> battery(socket)
+                    path == "/api/camera/formats" -> cameraFormats(socket)
                     else -> monitorPage(socket)
                 }
             }
@@ -269,6 +271,14 @@ class MjpegHttpServer(
             }
         """.trimIndent()
         sendText(socket, 200, "application/json; charset=utf-8", json)
+    }
+
+    private fun cameraFormats(socket: Socket) {
+        val payload = runCatching { cameraFormatsProvider() }
+            .getOrElse {
+                "{\"ok\":false,\"code\":500,\"message\":\"camera_formats_error\"}"
+            }
+        sendText(socket, 200, "application/json; charset=utf-8", payload)
     }
 
     private fun favicon(socket: Socket) {

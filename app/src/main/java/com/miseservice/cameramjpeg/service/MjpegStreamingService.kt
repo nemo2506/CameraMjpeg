@@ -104,7 +104,8 @@ class MjpegStreamingService : LifecycleService() {
             port = port,
             frameStore = frameStore,
             batteryStatusProvider = { latestBatteryStatus },
-            faviconProvider = { faviconPngBytes }
+            faviconProvider = { faviconPngBytes },
+            cameraFormatsProvider = { streamController.buildCameraOutputMapJson() }
         ).also { it.start() }
 
         streamController.start(useFront, quality.jpegQuality)

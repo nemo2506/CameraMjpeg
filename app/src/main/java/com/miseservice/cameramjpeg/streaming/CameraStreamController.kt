@@ -79,6 +79,55 @@ class CameraStreamController(
         stopInternal()
     }
 
+    fun buildCameraOutputMapJson(): String {
+        val generatedAt = System.currentTimeMillis()
+        val cameraBlocks = cameraManager.cameraIdList.joinToString(",\n") { cameraId ->
+            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val facing = when (characteristics.get(CameraCharacteristics.LENS_FACING)) {
+                CameraCharacteristics.LENS_FACING_FRONT -> "front"
+                CameraCharacteristics.LENS_FACING_BACK -> "back"
+                CameraCharacteristics.LENS_FACING_EXTERNAL -> "external"
+                else -> "unknown"
+            }
+            val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val formatBlocks = map
+                ?.outputFormats
+                ?.sorted()
+                ?.joinToString(",\n") { format ->
+                    val sizes = map.getOutputSizes(format).orEmpty().sortedWith(compareBy({ it.width }, { it.height }))
+                    val sizesJson = sizes.joinToString(",") { size ->
+                        val minFrameDurationNs = map.getOutputMinFrameDuration(format, size)
+                        val stallDurationNs = map.getOutputStallDuration(format, size)
+                        """{"width":${size.width},"height":${size.height},"minFrameDurationNs":$minFrameDurationNs,"stallDurationNs":$stallDurationNs}"""
+                    }
+                    """{"format":$format,"name":"${imageFormatName(format)}","sizes":[$sizesJson]}"""
+                }
+                ?: ""
+
+            """
+                {
+                  "cameraId":"${escapeJson(cameraId)}",
+                  "facing":"$facing",
+                  "formats":[
+                    $formatBlocks
+                  ]
+                }
+            """.trimIndent()
+        }
+
+        return """
+            {
+              "ok":true,
+              "generatedAtMs":$generatedAt,
+              "activeCameraId":"${escapeJson(currentCameraId)}",
+              "cameraCount":${cameraManager.cameraIdList.size},
+              "cameras":[
+                $cameraBlocks
+              ]
+            }
+        """.trimIndent()
+    }
+
     @SuppressLint("MissingPermission")
     private fun startCamera() {
         startBackgroundThread()
@@ -241,5 +290,39 @@ class CameraStreamController(
 
     private companion object {
         const val TAG = "CameraStreamController"
+
+        fun escapeJson(value: String): String {
+            return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+        }
+
+        fun imageFormatName(format: Int): String {
+            return when (format) {
+                ImageFormat.DEPTH16 -> "DEPTH16"
+                ImageFormat.DEPTH_JPEG -> "DEPTH_JPEG"
+                ImageFormat.DEPTH_POINT_CLOUD -> "DEPTH_POINT_CLOUD"
+                ImageFormat.FLEX_RGBA_8888 -> "FLEX_RGBA_8888"
+                ImageFormat.FLEX_RGB_888 -> "FLEX_RGB_888"
+                ImageFormat.HEIC -> "HEIC"
+                ImageFormat.JPEG -> "JPEG"
+                ImageFormat.NV16 -> "NV16"
+                ImageFormat.NV21 -> "NV21"
+                ImageFormat.PRIVATE -> "PRIVATE"
+                ImageFormat.RAW10 -> "RAW10"
+                ImageFormat.RAW12 -> "RAW12"
+                ImageFormat.RAW_PRIVATE -> "RAW_PRIVATE"
+                ImageFormat.RAW_SENSOR -> "RAW_SENSOR"
+                ImageFormat.RGB_565 -> "RGB_565"
+                ImageFormat.UNKNOWN -> "UNKNOWN"
+                ImageFormat.Y8 -> "Y8"
+                ImageFormat.YUV_420_888 -> "YUV_420_888"
+                ImageFormat.YUV_422_888 -> "YUV_422_888"
+                ImageFormat.YUV_444_888 -> "YUV_444_888"
+                ImageFormat.YUY2 -> "YUY2"
+                ImageFormat.YV12 -> "YV12"
+                else -> "FORMAT_$format"
+            }
+        }
     }
 }
