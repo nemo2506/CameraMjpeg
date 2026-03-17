@@ -1,6 +1,6 @@
 # 📷 CameraMjpeg
 
-![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white)
+![Android](https://img.shields.io/badge/Android-7.0%2B%20(minSdk%2024%2C%20targetSdk%2036%2C%20compileSdk%2036)-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-JVM%2011-7F52FF?logo=kotlin&logoColor=white)
 ![Stream](https://img.shields.io/badge/Stream-MJPEG-0A84FF)
 ![Service](https://img.shields.io/badge/Service-Foreground-FF9F0A)
@@ -54,8 +54,8 @@ flowchart LR
 > - `versionName`: `1.0`
 > - `versionCode`: `1`
 > - `minSdk`: `24` (Android 7.0+)
-> - `targetSdk`: `36`
-> - `compileSdk`: `36`
+> - `targetSdk`: `36` (Android 14)
+> - `compileSdk`: `36` (Android 14)
 > - Java/Kotlin JVM target : `11`
 
 > [!IMPORTANT]
@@ -247,8 +247,8 @@ flowchart LR
 > - `versionName`: `1.0`
 > - `versionCode`: `1`
 > - `minSdk`: `24` (Android 7.0+)
-> - `targetSdk`: `36`
-> - `compileSdk`: `36`
+> - `targetSdk`: `36` (Android 14)
+> - `compileSdk`: `36` (Android 14)
 > - Java/Kotlin JVM target: `11`
 
 > [!IMPORTANT]
@@ -372,5 +372,3 @@ adb -s <device-serial> install -r $apk
 > - Click "File" > "Sync Project with Gradle Files".
 > - If needed, close and reopen the project.
 > - The "Android" mode should appear in the sidebar.
-
----
