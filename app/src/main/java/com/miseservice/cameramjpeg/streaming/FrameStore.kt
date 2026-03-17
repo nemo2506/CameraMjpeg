@@ -5,11 +5,20 @@ package com.miseservice.cameramjpeg.streaming
  *
  * Stocke de façon thread-safe la dernière image JPEG et son numéro de séquence.
  * Permet de publier et de récupérer la dernière image pour le streaming MJPEG.
+ *
+ * Utilisation :
+ * - publish(jpeg) : Stocker une nouvelle image JPEG et incrémenter le numéro de séquence.
+ * - latest() : Récupérer la dernière image JPEG.
+ * - awaitNext(lastKnownSequence, timeoutMs) : Attendre la prochaine image après un numéro de séquence donné, ou jusqu’au timeout.
+ *
+ * @constructor Constructeur par défaut.
  */
 class FrameStore {
     private val lock = Object()
+    /** Dernière image JPEG publiée. */
     @Volatile
     private var latestFrame: ByteArray? = null
+    /** Numéro de séquence pour la dernière image. */
     @Volatile
     private var sequence: Long = 0
 
@@ -17,7 +26,7 @@ class FrameStore {
      * Publie une nouvelle image JPEG et incrémente le numéro de séquence.
      * Notifie tous les threads en attente.
      *
-     * @param jpeg Image JPEG à publier
+     * @param jpeg Image JPEG à publier.
      */
     fun publish(jpeg: ByteArray) {
         synchronized(lock) {
@@ -30,16 +39,16 @@ class FrameStore {
     /**
      * Retourne la dernière image JPEG publiée.
      *
-     * @return Dernière image JPEG ou null
+     * @return Dernière image JPEG ou null.
      */
     fun latest(): ByteArray? = latestFrame
 
     /**
      * Attend la prochaine image après un numéro de séquence donné, ou jusqu’au timeout.
      *
-     * @param lastKnownSequence Dernier numéro de séquence connu
-     * @param timeoutMs Timeout en millisecondes
-     * @return Paire (nouveau numéro de séquence, image) ou null si timeout ou aucune image
+     * @param lastKnownSequence Dernier numéro de séquence connu.
+     * @param timeoutMs Timeout en millisecondes.
+     * @return Paire (nouveau numéro de séquence, image) ou null si timeout ou aucune image.
      */
     fun awaitNext(lastKnownSequence: Long, timeoutMs: Long): Pair<Long, ByteArray>? {
         synchronized(lock) {

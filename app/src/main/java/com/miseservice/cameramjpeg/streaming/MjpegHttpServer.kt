@@ -19,15 +19,20 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Serveur HTTP embarqué pour le streaming MJPEG et les endpoints de monitoring.
+ * Embedded HTTP server for MJPEG streaming and monitoring endpoints.
+ * Handles multiple clients, provides status, battery, camera formats endpoints, and serves the monitoring HTML page.
  *
- * Gère plusieurs clients, fournit les endpoints de statut, batterie, formats caméra et sert la page HTML de monitoring.
+ * Usage:
+ * - start(): Start the HTTP server and accept client connections.
+ * - stop(): Stop the server and disconnect all clients.
+ * - Provides endpoints: /stream.mjpeg, /api/status, /api/battery, /api/camera/formats, /favicon.ico, / (HTML page).
  *
- * @param port Port TCP d'écoute
- * @param frameStore Stockage du dernier JPEG
- * @param batteryStatusProvider Fournisseur du statut batterie
- * @param faviconProvider Fournisseur du favicon
- * @param cameraFormatsProvider Fournisseur des formats caméra (JSON)
+ * @param port TCP listening port.
+ * @param frameStore Store for the latest JPEG frame.
+ * @param batteryStatusProvider Battery status provider.
+ * @param faviconProvider Favicon provider.
+ * @param cameraFormatsProvider Camera formats provider (JSON).
+ * @constructor Default constructor.
  */
 class MjpegHttpServer(
     private val port: Int,
@@ -43,15 +48,19 @@ class MjpegHttpServer(
     private val clients = CopyOnWriteArrayList<Socket>()
     private val startedAtMs = System.currentTimeMillis()
     private val metricsLock = Any()
+    /** Total frames sent to all clients. */
     @Volatile private var totalFramesSent: Long = 0
+    /** Total bytes sent to all clients. */
     @Volatile private var totalBytesSent: Long = 0
+    /** Number of active MJPEG stream clients. */
     @Volatile private var activeStreamClients: Int = 0
+    /** Estimated FPS for streaming. */
     @Volatile private var fpsEstimate: Int = 0
     private var fpsWindowStartMs: Long = System.currentTimeMillis()
     private var fpsWindowFrames: Int = 0
 
     /**
-     * Démarre le serveur HTTP et accepte les connexions clients.
+     * Starts the HTTP server and accepts client connections.
      */
     fun start() {
         if (acceptJob?.isActive == true) return

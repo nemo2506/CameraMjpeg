@@ -22,16 +22,24 @@ import com.miseservice.cameramjpeg.ui.screen.AdminScreen
 import com.miseservice.cameramjpeg.ui.theme.CameraMjpegTheme
 
 /**
- * Activité principale de l’application CameraMjpeg.
+ * Main activity for the CameraMjpeg application.
+ * Entry point: handles permissions and initializes the main Compose UI.
  *
- * Point d’entrée de l’application : gère les permissions et initialise l’UI Compose principale.
+ * Usage:
+ * - Starts CameraForegroundService for camera streaming protection.
+ * - Sets up Compose UI with AdminViewModel.
+ * - Handles lifecycle events (onCreate, onDestroy).
+ *
+ * @constructor Default constructor for ComponentActivity.
  */
 class MainActivity : ComponentActivity() {
-    /** ViewModel pour l’administration et l’état du streaming. */
+    /** ViewModel for administration and streaming state. */
     private val viewModel: AdminViewModel by viewModels()
 
     /**
-     * Appelée au démarrage de l’activité. Initialise l’UI et gère les permissions.
+     * Called when the activity is created. Initializes UI and handles permissions.
+     * Starts the foreground camera service.
+     * @param savedInstanceState Bundle for saved state.
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,7 +54,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // Démarrage du service foreground caméra
+        // Start foreground camera service
         val intent = Intent(this, CameraForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
@@ -55,9 +63,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Called when the activity is destroyed. Stops the foreground camera service.
+     */
     override fun onDestroy() {
         super.onDestroy()
-        // Arrêt du service foreground caméra
+        // Stop foreground camera service
         val intent = Intent(this, CameraForegroundService::class.java)
         intent.action = CameraForegroundService.ACTION_STOP
         startService(intent)
