@@ -354,3 +354,23 @@ adb -s <device-serial> install -r $apk
 > - Il est démarré automatiquement par MainActivity lors du lancement de l'application.
 > - Il garantit la persistance du streaming MJPEG même en arrière-plan.
 
+---
+
+> [!INFO]
+> **🏷️ FR · Mode Android IDE**
+> Si l'IDE affiche le projet en mode "Projet" au lieu de "Android" :
+> - Ouvrez le projet depuis le dossier racine `CameraMjpeg`.
+> - Vérifiez la présence de `build.gradle.kts` et du dossier `app/`.
+> - Cliquez sur "File" > "Sync Project with Gradle Files".
+> - Si besoin, fermez puis rouvrez le projet.
+> - Le mode "Android" doit apparaître dans la barre latérale.
+>
+> **🏷️ EN · Android IDE Mode**
+> If the IDE shows the project in "Project" mode instead of "Android":
+> - Open the project from the root folder `CameraMjpeg`.
+> - Check for `build.gradle.kts` and the `app/` folder.
+> - Click "File" > "Sync Project with Gradle Files".
+> - If needed, close and reopen the project.
+> - The "Android" mode should appear in the sidebar.
+
+---
