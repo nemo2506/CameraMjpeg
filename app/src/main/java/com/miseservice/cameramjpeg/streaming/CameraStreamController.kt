@@ -9,17 +9,26 @@ import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager as AndroidCameraManager
-// ...existing imports...
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
 
+/**
+ * CameraStreamController
+ *
+ * Controls the camera stream for MJPEG output. Handles camera initialization, frame acquisition,
+ * YUV to NV21 conversion, rotation, and JPEG encoding. Buffers are reused for performance.
+ *
+ * @param context Application context
+ * @param frameStore FrameStore instance to publish JPEG frames
+ */
 class CameraStreamController(
     context: Context,
     private val frameStore: FrameStore
 ) {
+    /** Android CameraManager service */
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as AndroidCameraManager
 
     private var cameraDevice: CameraDevice? = null
@@ -30,11 +39,17 @@ class CameraStreamController(
 
     private var currentCameraId = ""
     private var isUsingFrontCamera = true
-    private var jpegQuality: Int = 80  // ← 80 au lieu de 92
-    // Buffers réutilisables
+    private var jpegQuality: Int = 80  // JPEG compression quality (default: 80)
+    /**
+     * Reusable buffers for NV21 and rotated NV21 data.
+     * These are allocated once per stream size to reduce GC pressure.
+     */
     private var nv21Buffer: ByteArray?    = null
     private var rotatedBuffer: ByteArray? = null
 
+    /**
+     * CameraDevice callback to handle camera state changes.
+     */
     private val cameraDeviceCallback = object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
             cameraDevice = camera
@@ -49,22 +64,34 @@ class CameraStreamController(
         }
     }
 
+    /**
+     * Start the camera stream with the selected camera and JPEG quality.
+     * @param useFrontCamera true to use the front camera, false for back
+     * @param jpegQuality JPEG compression quality (0-100)
+     */
     fun start(useFrontCamera: Boolean, jpegQuality: Int) {
         isUsingFrontCamera = useFrontCamera
         this.jpegQuality   = jpegQuality
         startCamera()
     }
 
+    /**
+     * Switch between front and back camera.
+     * @param useFront true for front camera, false for back
+     */
     fun switchCamera(useFront: Boolean) {
         isUsingFrontCamera = useFront
         stopInternal()
         startCamera()
     }
 
+    /**
+     * Update JPEG compression quality.
+     * @param newQuality JPEG quality (0-100)
+     */
     fun updateQuality(newQuality: Int) { jpegQuality = newQuality }
+    /** Stop the camera stream and release resources. */
     fun stop() { stopInternal() }
-
-    // ...existing code...
 
     @SuppressLint("MissingPermission")
     private fun startCamera() {
@@ -74,7 +101,10 @@ class CameraStreamController(
         val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
         val streamConfigs   = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
 
-        // ✅ Résolution maximale streaming : prendre la plus grande possible
+        /**
+         * Select the maximum available resolution for streaming (YUV_420_888).
+         * Fallback to 1280x720 if not available.
+         */
         val size: Size = streamConfigs
             ?.getOutputSizes(ImageFormat.YUV_420_888)
             ?.maxByOrNull { it.width * it.height }
@@ -82,19 +112,23 @@ class CameraStreamController(
 
         Log.d(TAG, "Stream size: ${size.width}x${size.height}")
 
-        // Pré-allouer tous les buffers
+        // Allocate buffers for NV21 and rotated NV21 data
         val ySize = size.width * size.height
         nv21Buffer    = ByteArray(ySize + ySize / 2)
         rotatedBuffer = ByteArray(ySize + ySize / 2)
 
+        /**
+         * Create an ImageReader for YUV_420_888 frames and set the listener to process each frame.
+         * The listener converts the image to NV21, rotates it 180°, encodes to JPEG, and publishes.
+         */
         imageReader = ImageReader.newInstance(
-            size.width, size.height, ImageFormat.YUV_420_888, 3 // ← 3 buffers
+            size.width, size.height, ImageFormat.YUV_420_888, 3
         ).also { reader ->
             reader.setOnImageAvailableListener({ r ->
                 val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
                 try {
                     imageToNV21Fast(image, nv21Buffer!!, size.width, size.height)
-                    image.close() // ← fermer le plus tôt possible
+                    image.close()
 
                     rotateNv21_180InPlace(
                         nv21Buffer!!, rotatedBuffer!!,
@@ -114,6 +148,11 @@ class CameraStreamController(
         cameraManager.openCamera(currentCameraId, cameraDeviceCallback, backgroundHandler)
     }
 
+    /**
+     * Start a camera capture session for the given camera device.
+     * Configures the session for preview and disables unnecessary processing.
+     * @param camera The opened CameraDevice
+     */
     private fun startCaptureSession(camera: CameraDevice) {
         val surface = imageReader?.surface ?: return
 
@@ -124,21 +163,26 @@ class CameraStreamController(
                 override fun onConfigured(session: CameraCaptureSession) {
                     captureSession = session
                     try {
-                        val request = camera
-                            .createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                            .apply {
-                                addTarget(surface)
-                                // ✅ Désactiver les traitements inutiles
-                                set(android.hardware.camera2.CaptureRequest.EDGE_MODE,
-                                    android.hardware.camera2.CaptureRequest.EDGE_MODE_OFF)
-                                set(android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE,
-                                    android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE_OFF)
-                                set(android.hardware.camera2.CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE,
-                                    android.hardware.camera2.CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF)
-                                set(android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE,
-                                    android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                            }
-                            .build()
+                        val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                        requestBuilder.addTarget(surface)
+                        // Disable edge, noise, and aberration corrections for performance
+                        requestBuilder.set(
+                            android.hardware.camera2.CaptureRequest.EDGE_MODE,
+                            android.hardware.camera2.CaptureRequest.EDGE_MODE_OFF
+                        )
+                        requestBuilder.set(
+                            android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE,
+                            android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE_OFF
+                        )
+                        requestBuilder.set(
+                            android.hardware.camera2.CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE,
+                            android.hardware.camera2.CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF
+                        )
+                        requestBuilder.set(
+                            android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE,
+                            android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+                        )
+                        val request = requestBuilder.build()
                         session.setRepeatingRequest(request, null, backgroundHandler)
                     } catch (e: Exception) {
                         Log.e(TAG, "Repeating request failed: ${e.message}", e)
@@ -152,15 +196,22 @@ class CameraStreamController(
         )
     }
 
-    // Conversion optimisée YUV_420_888 → NV21 (buffer réutilisé, bulk copy si possible)
-    private fun imageToNV21Fast(image: Image, nv21: ByteArray, width: Int, height: Int) {
+    /**
+     * Convert a YUV_420_888 Image to NV21 format using the provided buffer.
+     * This method avoids allocations and uses bulk copy when possible.
+     * @param image The YUV_420_888 Image
+     * @param nv21 The output NV21 buffer
+     * @param width Image width
+     * @param height Image height
+     */
+    private fun imageToNV21Fast(image: android.media.Image, nv21: ByteArray, width: Int, height: Int) {
         val ySize  = width * height
         val yPlane = image.planes[0]
         val uPlane = image.planes[1]
         val vPlane = image.planes[2]
 
-        // Plan Y
-        val yBuffer = yPlane.buffer.also { it.position(0) }
+        // Copy Y plane
+        val yBuffer = yPlane.buffer
         if (yPlane.rowStride == width) {
             yBuffer.get(nv21, 0, ySize)
         } else {
@@ -172,7 +223,7 @@ class CameraStreamController(
             }
         }
 
-        // Plans U/V
+        // Copy interleaved VU planes
         val vBuffer       = vPlane.buffer
         val uBuffer       = uPlane.buffer
         val uvRowStride   = uPlane.rowStride
@@ -189,7 +240,7 @@ class CameraStreamController(
                 }
             }
         } else {
-            // Déjà entrelacé → bulk copy
+            // Already interleaved, bulk copy
             repeat(height / 2) { row ->
                 vBuffer.position(row * uvRowStride)
                 vBuffer.get(nv21, offset, width - 1)
@@ -198,7 +249,13 @@ class CameraStreamController(
         }
     }
 
-    // Rotation 180° dans buffer pré-alloué
+    /**
+     * Rotate an NV21 image 180 degrees in-place using a pre-allocated buffer.
+     * @param src Source NV21 buffer
+     * @param dst Destination buffer for rotated NV21
+     * @param width Image width
+     * @param height Image height
+     */
     private fun rotateNv21_180InPlace(src: ByteArray, dst: ByteArray, width: Int, height: Int) {
         val ySize = width * height
         var out   = 0
@@ -212,7 +269,13 @@ class CameraStreamController(
         }
     }
 
-    // Conversion NV21 → JPEG
+    /**
+     * Encode an NV21 image to JPEG using the specified quality.
+     * @param nv21 NV21 image buffer
+     * @param width Image width
+     * @param height Image height
+     * @return JPEG-encoded byte array
+     */
     private fun nv21ToJpeg(nv21: ByteArray, width: Int, height: Int): ByteArray {
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
         val out = java.io.ByteArrayOutputStream()
@@ -220,6 +283,9 @@ class CameraStreamController(
         return out.toByteArray()
     }
 
+    /**
+     * Stop and release all camera and background resources.
+     */
     private fun stopInternal() {
         captureSession?.close(); captureSession = null
         cameraDevice?.close();   cameraDevice   = null
@@ -227,6 +293,9 @@ class CameraStreamController(
         stopBackgroundThread()
     }
 
+    /**
+     * Start a background thread for camera operations.
+     */
     private fun startBackgroundThread() {
         handlerThread = HandlerThread("CameraBackground", android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY).also {
             it.start()
@@ -234,6 +303,9 @@ class CameraStreamController(
         }
     }
 
+    /**
+     * Stop the background thread and release resources.
+     */
     private fun stopBackgroundThread() {
         handlerThread?.quitSafely()
         try { handlerThread?.join() } catch (_: InterruptedException) {}
@@ -241,6 +313,11 @@ class CameraStreamController(
         backgroundHandler = null
     }
 
+    /**
+     * Get the camera ID for the requested facing (front or back).
+     * @param useFront true for front camera, false for back
+     * @return Camera ID string
+     */
     private fun getCameraId(useFront: Boolean): String {
         val facing = if (useFront) CameraCharacteristics.LENS_FACING_FRONT
                      else          CameraCharacteristics.LENS_FACING_BACK
