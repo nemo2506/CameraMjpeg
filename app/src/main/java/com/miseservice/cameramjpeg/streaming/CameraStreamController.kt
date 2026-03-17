@@ -14,6 +14,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * CameraStreamController
@@ -293,9 +295,15 @@ class CameraStreamController(
         val streamConfigs = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
         val outputSizes = streamConfigs?.getOutputSizes(ImageFormat.YUV_420_888)
         val formats = outputSizes?.map {
-            mapOf("width" to it.width, "height" to it.height)
-        } ?: emptyList()
-        return """{"ok":true,"formats":${formats.toString().replace("=", ":")}}"""
+            JSONObject().apply {
+                put("width", it.width)
+                put("height", it.height)
+            }
+        } ?: emptyList<JSONObject>()
+        val root = JSONObject()
+        root.put("ok", true)
+        root.put("formats", JSONArray(formats))
+        return root.toString()
     }
 
     /**
