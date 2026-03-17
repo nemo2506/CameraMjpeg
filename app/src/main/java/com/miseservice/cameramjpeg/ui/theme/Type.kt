@@ -7,9 +7,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 /**
- * Typography
+ * Typographie principale de l’application CameraMjpeg.
  *
- * Defines the set of Material typography styles for the application.
+ * Définit les styles de texte Material utilisés dans l’interface Compose.
  */
 val Typography = Typography(
     bodyLarge = TextStyle(
@@ -19,7 +19,7 @@ val Typography = Typography(
         lineHeight = 24.sp,
         letterSpacing = 0.5.sp
     )
-    /* Other default text styles to override
+    /* Autres styles de texte par défaut à surcharger si besoin
     titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,

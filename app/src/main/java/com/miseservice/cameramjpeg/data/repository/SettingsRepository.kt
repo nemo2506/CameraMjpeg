@@ -12,6 +12,10 @@ import kotlinx.coroutines.flow.first
 
 private val Context.dataStore by preferencesDataStore(name = "camera_mjpeg_settings")
 
+/**
+ * Repository pour la gestion de la persistance des paramètres administrateur.
+ * Utilise DataStore pour stocker et charger les préférences de streaming MJPEG.
+ */
 class SettingsRepository(private val context: Context) {
 
     private object Keys {
@@ -45,4 +49,3 @@ class SettingsRepository(private val context: Context) {
         }
     }
 }
-

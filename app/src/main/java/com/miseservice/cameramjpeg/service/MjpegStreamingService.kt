@@ -21,6 +21,12 @@ import com.miseservice.cameramjpeg.streaming.BatteryStatus
 import com.miseservice.cameramjpeg.streaming.FrameStore
 import com.miseservice.cameramjpeg.streaming.MjpegHttpServer
 
+/**
+ * MjpegStreamingService
+ *
+ * Service Android principal pour la gestion du streaming MJPEG, du contrôle caméra et de l'API HTTP.
+ * Gère la notification, le suivi batterie, le cycle de vie et l'initialisation du serveur HTTP.
+ */
 class MjpegStreamingService : LifecycleService() {
 
     private val frameStore = FrameStore()

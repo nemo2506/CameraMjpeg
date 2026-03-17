@@ -51,13 +51,13 @@ private val LightColorScheme = lightColorScheme(
 )
 
 /**
- * CameraMjpegTheme
+ * Thème principal CameraMjpeg pour Compose.
  *
- * Composable theme for the CameraMjpeg app. Applies color scheme and typography based on system theme and dynamic color support.
+ * Applique la palette de couleurs et la typographie selon le mode sombre/clair et la prise en charge des couleurs dynamiques (Android 12+).
  *
- * @param darkTheme Whether to use dark theme
- * @param dynamicColor Whether to use dynamic color (Android 12+)
- * @param content Composable content to display
+ * @param darkTheme Utiliser le thème sombre si vrai
+ * @param dynamicColor Utiliser les couleurs dynamiques si supporté
+ * @param content Contenu composable à afficher
  */
 @Composable
 fun CameraMjpegTheme(

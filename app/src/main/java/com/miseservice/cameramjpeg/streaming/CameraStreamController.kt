@@ -284,6 +284,21 @@ class CameraStreamController(
     }
 
     /**
+     * Retourne la liste des formats de sortie supportés par la caméra courante au format JSON.
+     *
+     * @return Chaîne JSON décrivant les résolutions et formats disponibles
+     */
+    fun buildCameraOutputMapJson(): String {
+        val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
+        val streamConfigs = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val outputSizes = streamConfigs?.getOutputSizes(ImageFormat.YUV_420_888)
+        val formats = outputSizes?.map {
+            mapOf("width" to it.width, "height" to it.height)
+        } ?: emptyList()
+        return """{"ok":true,"formats":${formats.toString().replace("=", ":")}}"""
+    }
+
+    /**
      * Stop and release all camera and background resources.
      */
     private fun stopInternal() {

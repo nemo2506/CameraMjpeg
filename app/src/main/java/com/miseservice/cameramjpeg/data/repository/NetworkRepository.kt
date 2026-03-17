@@ -14,6 +14,10 @@ import androidx.core.content.ContextCompat
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
+/**
+ * Repository pour la détection réseau et la génération des URLs d’API.
+ * Fournit un snapshot de l’état réseau, SSID, IP locale et URLs utiles pour l’UI.
+ */
 data class NetworkSnapshot(
     val isWifiConnected: Boolean,
     val wifiSsid: String?,
@@ -26,6 +30,10 @@ data class NetworkSnapshot(
     val viewerUrl: String?
 )
 
+/**
+ * Repository pour la détection réseau et la génération des URLs d’API.
+ * Fournit un snapshot de l’état réseau, SSID, IP locale et URLs utiles pour l’UI.
+ */
 class NetworkRepository(private val context: Context) {
 
     fun detect(port: Int): NetworkSnapshot {
@@ -137,4 +145,3 @@ class NetworkRepository(private val context: Context) {
         return clean
     }
 }
-

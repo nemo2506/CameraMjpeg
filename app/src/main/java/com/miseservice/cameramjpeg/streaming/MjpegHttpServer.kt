@@ -19,16 +19,15 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * MjpegHttpServer
+ * Serveur HTTP embarqué pour le streaming MJPEG et les endpoints de monitoring.
  *
- * HTTP server for streaming MJPEG video and serving monitoring endpoints.
- * Handles multiple clients, provides status and battery endpoints, and serves a monitoring HTML page.
+ * Gère plusieurs clients, fournit les endpoints de statut, batterie, formats caméra et sert la page HTML de monitoring.
  *
- * @param port TCP port to listen on
- * @param frameStore Store for the latest JPEG frames
- * @param batteryStatusProvider Function to provide current battery status
- * @param faviconProvider Function to provide favicon bytes
- * @param cameraFormatsProvider Function to provide camera format info as JSON
+ * @param port Port TCP d'écoute
+ * @param frameStore Stockage du dernier JPEG
+ * @param batteryStatusProvider Fournisseur du statut batterie
+ * @param faviconProvider Fournisseur du favicon
+ * @param cameraFormatsProvider Fournisseur des formats caméra (JSON)
  */
 class MjpegHttpServer(
     private val port: Int,
@@ -52,7 +51,7 @@ class MjpegHttpServer(
     private var fpsWindowFrames: Int = 0
 
     /**
-     * Start the HTTP server and begin accepting client connections.
+     * Démarre le serveur HTTP et accepte les connexions clients.
      */
     fun start() {
         if (acceptJob?.isActive == true) return

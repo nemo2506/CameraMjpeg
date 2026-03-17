@@ -20,16 +20,16 @@ import com.miseservice.cameramjpeg.ui.screen.AdminScreen
 import com.miseservice.cameramjpeg.ui.theme.CameraMjpegTheme
 
 /**
- * MainActivity
+ * Activité principale de l’application CameraMjpeg.
  *
- * Entry point for the CameraMjpeg application. Handles permission requests and sets up the main UI.
+ * Point d’entrée de l’application : gère les permissions et initialise l’UI Compose principale.
  */
 class MainActivity : ComponentActivity() {
-    /** ViewModel for admin and streaming state. */
+    /** ViewModel pour l’administration et l’état du streaming. */
     private val viewModel: AdminViewModel by viewModels()
 
     /**
-     * Called when the activity is starting. Sets up the UI and requests permissions if needed.
+     * Appelée au démarrage de l’activité. Initialise l’UI et gère les permissions.
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,12 +48,10 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * MainContent
+ * Composable principal de l’application. Gère les permissions et affiche l’écran d’administration.
  *
- * Composable for the main content of the app. Handles permission requests and displays the admin screen.
- *
- * @param viewModel The AdminViewModel instance
- * @param modifier Modifier for layout
+ * @param viewModel Instance du ViewModel d’administration
+ * @param modifier Modificateur de layout
  */
 @Composable
 private fun MainContent(viewModel: AdminViewModel, modifier: Modifier = Modifier) {

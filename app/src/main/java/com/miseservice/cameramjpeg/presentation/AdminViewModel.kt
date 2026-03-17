@@ -24,6 +24,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/**
+ * ViewModel principal pour l’écran d’administration du streaming MJPEG.
+ * Gère l’état de l’UI, la persistance des paramètres, le suivi batterie et le contrôle du service de streaming.
+ *
+ * @param application Contexte application Android
+ */
 class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
@@ -66,6 +72,9 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
     }
 
+    /**
+     * Rafraîchit les informations réseau (IP, SSID, URLs).
+     */
     fun refreshNetworkInfo() {
         val port = currentPort() ?: 8080
         val network = fetchNetworkInfoUseCase(port)
@@ -90,7 +99,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-
+    /**
+     * Définit le port de streaming et met à jour l’état.
+     * @param rawPort Port sous forme de chaîne
+     */
     fun setStreamingPort(rawPort: String) {
         val validatedPort = rawPort.toIntOrNull()?.takeIf { it in 1..65535 }
         if (validatedPort == null) {
@@ -118,6 +130,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         refreshNetworkInfo()
     }
 
+    /**
+     * Change la caméra utilisée (avant/arrière).
+     * @param useFront true pour caméra avant
+     */
     fun setCamera(useFront: Boolean) {
         _uiState.update { it.copy(useFrontCamera = useFront) }
         if (_uiState.value.isStreaming) {
@@ -126,6 +142,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         persist()
     }
 
+    /**
+     * Change la qualité de streaming.
+     * @param quality Qualité sélectionnée
+     */
     fun setQuality(quality: StreamQuality) {
         _uiState.update { it.copy(selectedQuality = quality) }
         if (_uiState.value.isStreaming) {
@@ -134,6 +154,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         persist()
     }
 
+    /**
+     * Active ou désactive le maintien de l’écran allumé.
+     * @param enabled true pour garder l’écran allumé
+     */
     fun setKeepAwake(enabled: Boolean) {
         _uiState.update { it.copy(keepScreenAwake = enabled) }
         if (_uiState.value.isStreaming) {
@@ -142,6 +166,9 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         persist()
     }
 
+    /**
+     * Démarre le streaming MJPEG.
+     */
     fun startStreaming() {
         val port = currentPort()
         if (port == null) {
@@ -156,12 +183,18 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         refreshNetworkInfo()
     }
 
+    /**
+     * Arrête le streaming MJPEG.
+     */
     fun stopStreaming() {
         appContext.startService(MjpegStreamingService.stopIntent(appContext))
         _uiState.update { it.copy(isStreaming = false) }
         persist(currentSettings(isStreaming = false))
     }
 
+    /**
+     * Vérifie si les permissions requises sont accordées.
+     */
     fun hasRequiredPermissions(): Boolean {
         val cameraOk = ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         val locationOk = ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED

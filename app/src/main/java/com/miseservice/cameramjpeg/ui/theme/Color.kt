@@ -3,9 +3,9 @@ package com.miseservice.cameramjpeg.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Color palette for CameraMjpeg application theme.
+ * Palette de couleurs pour le thème CameraMjpeg.
  *
- * Defines all custom colors used in the app for both dark and light themes.
+ * Définit toutes les couleurs personnalisées utilisées dans l’application pour les thèmes clair et sombre.
  */
 val ParkingPrimary = Color(0xFFF08A3C)
 val ParkingPrimaryDark = Color(0xFFC46A2F)

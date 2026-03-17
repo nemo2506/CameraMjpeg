@@ -54,6 +54,15 @@ import com.miseservice.cameramjpeg.domain.model.StreamQuality
 import com.miseservice.cameramjpeg.presentation.AdminViewModel
 import kotlinx.coroutines.launch
 
+/**
+ * AdminScreen
+ *
+ * Main composable for the administration UI of the CameraMjpeg app.
+ * Displays streaming controls, configuration, network info, and battery status.
+ *
+ * @param viewModel The AdminViewModel instance
+ * @param modifier Modifier for layout
+ */
 @Composable
 fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
     val uiState by viewModel.uiState.collectAsState()
@@ -116,6 +125,14 @@ fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * StatusCard
+ *
+ * Displays the current streaming status and any error messages.
+ *
+ * @param isStreaming Whether streaming is active
+ * @param errorMessage Optional error message to display
+ */
 @Composable
 private fun StatusCard(isStreaming: Boolean, errorMessage: String?) {
     Card(
@@ -139,6 +156,22 @@ private fun StatusCard(isStreaming: Boolean, errorMessage: String?) {
     }
 }
 
+/**
+ * ConfigCard
+ *
+ * Displays and allows editing of streaming configuration: port, quality, camera, and keep awake.
+ *
+ * @param currentPort Current streaming port
+ * @param isStreaming Whether streaming is active
+ * @param onPortSaved Callback when port is saved
+ * @param selectedQuality Selected JPEG quality
+ * @param onQualityChange Callback when quality changes
+ * @param useFrontCamera Whether front camera is used
+ * @param onSetFront Callback to set front camera
+ * @param onSetBack Callback to set back camera
+ * @param keepScreenAwake Whether to keep screen awake
+ * @param onKeepAwakeChange Callback for keep awake toggle
+ */
 @Composable
 private fun ConfigCard(
     currentPort: Int,
@@ -246,6 +279,25 @@ private fun ConfigCard(
     }
 }
 
+/**
+ * NetworkCard
+ *
+ * Displays network and battery information, and provides copyable API/stream URLs.
+ *
+ * @param isWifiConnected Whether Wi-Fi is connected
+ * @param ssid Wi-Fi SSID
+ * @param localIp Local IP address
+ * @param batteryLevelPercent Battery level percent
+ * @param isBatteryCharging Whether battery is charging
+ * @param batteryStatusLabel Battery status label
+ * @param batteryTemperatureC Battery temperature in Celsius
+ * @param batteryApiUrl API URL for battery info
+ * @param cameraFormatsApiUrl API URL for camera formats
+ * @param streamUrl MJPEG stream URL
+ * @param viewerUrl Viewer URL
+ * @param onRefresh Callback to refresh network info
+ * @param onCopy Callback to copy URL
+ */
 @Composable
 private fun NetworkCard(
     isWifiConnected: Boolean,
@@ -321,6 +373,15 @@ private fun NetworkCard(
     }
 }
 
+/**
+ * UrlRow
+ *
+ * Displays a label and a copyable URL value.
+ *
+ * @param label Label for the URL
+ * @param value URL value
+ * @param onCopy Callback to copy the value
+ */
 @Composable
 private fun UrlRow(label: String, value: String?, onCopy: (String) -> Unit) {
     Column {
@@ -337,4 +398,3 @@ private fun UrlRow(label: String, value: String?, onCopy: (String) -> Unit) {
         }
     }
 }
-

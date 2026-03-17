@@ -3,8 +3,8 @@ package com.miseservice.cameramjpeg.streaming
 /**
  * FrameStore
  *
- * Thread-safe store for the latest JPEG frame and its sequence number.
- * Used to publish and retrieve the most recent frame for streaming.
+ * Stocke de façon thread-safe la dernière image JPEG et son numéro de séquence.
+ * Permet de publier et de récupérer la dernière image pour le streaming MJPEG.
  */
 class FrameStore {
     private val lock = Object()
@@ -14,10 +14,10 @@ class FrameStore {
     private var sequence: Long = 0
 
     /**
-     * Publish a new JPEG frame and increment the sequence number.
-     * Notifies all waiting threads.
+     * Publie une nouvelle image JPEG et incrémente le numéro de séquence.
+     * Notifie tous les threads en attente.
      *
-     * @param jpeg The JPEG frame to publish
+     * @param jpeg Image JPEG à publier
      */
     fun publish(jpeg: ByteArray) {
         synchronized(lock) {
@@ -28,18 +28,18 @@ class FrameStore {
     }
 
     /**
-     * Get the latest published JPEG frame.
+     * Retourne la dernière image JPEG publiée.
      *
-     * @return The latest JPEG frame, or null if none
+     * @return Dernière image JPEG ou null
      */
     fun latest(): ByteArray? = latestFrame
 
     /**
-     * Wait for the next frame after a given sequence number, or until timeout.
+     * Attend la prochaine image après un numéro de séquence donné, ou jusqu’au timeout.
      *
-     * @param lastKnownSequence The last known sequence number
-     * @param timeoutMs Timeout in milliseconds
-     * @return Pair of new sequence number and frame, or null if timeout or no frame
+     * @param lastKnownSequence Dernier numéro de séquence connu
+     * @param timeoutMs Timeout en millisecondes
+     * @return Paire (nouveau numéro de séquence, image) ou null si timeout ou aucune image
      */
     fun awaitNext(lastKnownSequence: Long, timeoutMs: Long): Pair<Long, ByteArray>? {
         synchronized(lock) {
