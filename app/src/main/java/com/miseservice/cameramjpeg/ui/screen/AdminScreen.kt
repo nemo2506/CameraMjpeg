@@ -53,6 +53,9 @@ import androidx.compose.ui.unit.sp
 import com.miseservice.cameramjpeg.domain.model.StreamQuality
 import com.miseservice.cameramjpeg.presentation.AdminViewModel
 import kotlinx.coroutines.launch
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 
 /**
  * AdminScreen
@@ -189,6 +192,8 @@ private fun ConfigCard(
     val parsedPort = portInput.toIntOrNull()
     val isValidPort = parsedPort != null && parsedPort in 1..65535
     val isChanged = parsedPort != null && parsedPort != currentPort
+    val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
 
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -202,7 +207,7 @@ private fun ConfigCard(
                 OutlinedTextField(
                     value = portInput,
                     onValueChange = { portInput = it.filter(Char::isDigit).take(5) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
                     label = { Text("Port (1-65535)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -210,7 +215,10 @@ private fun ConfigCard(
                 )
 
                 Button(
-                    onClick = { onPortSaved(portInput) },
+                    onClick = {
+                        onPortSaved(portInput)
+                        focusManager.clearFocus()
+                    },
                     enabled = isValidPort && isChanged,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.size(width = 64.dp, height = 56.dp),
