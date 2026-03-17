@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.miseservice.cameramjpeg.domain.model.StreamQuality
 import com.miseservice.cameramjpeg.presentation.AdminViewModel
+import com.miseservice.cameramjpeg.util.NetworkManager
 import kotlinx.coroutines.launch
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -67,10 +68,15 @@ import androidx.compose.ui.platform.LocalFocusManager
  * @param modifier Modifier for layout
  */
 @Composable
-fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
+fun AdminScreen(
+    viewModel: AdminViewModel,
+    networkManager: NetworkManager,
+    modifier: Modifier = Modifier
+) {
     val uiState by viewModel.uiState.collectAsState()
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    val networkType by networkManager.activeNetworkType.collectAsState()
 
     Column(
         modifier = modifier
@@ -118,6 +124,8 @@ fun AdminScreen(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
             cameraFormatsApiUrl = uiState.cameraFormatsApiUrl,
             streamUrl = uiState.streamUrl,
             viewerUrl = uiState.viewerUrl,
+            networkType = networkType,
+            onSwitchNetwork = { networkManager.switchTo(it) },
             onRefresh = viewModel::refreshNetworkInfo,
             onCopy = { text ->
                 scope.launch {
@@ -303,6 +311,8 @@ private fun ConfigCard(
  * @param cameraFormatsApiUrl API URL for camera formats
  * @param streamUrl MJPEG stream URL
  * @param viewerUrl Viewer URL
+ * @param networkType Current network type (Wi-Fi/Ethernet)
+ * @param onSwitchNetwork Callback to switch network
  * @param onRefresh Callback to refresh network info
  * @param onCopy Callback to copy URL
  */
@@ -319,6 +329,8 @@ private fun NetworkCard(
     cameraFormatsApiUrl: String?,
     streamUrl: String?,
     viewerUrl: String?,
+    networkType: NetworkManager.NetworkType,
+    onSwitchNetwork: (NetworkManager.NetworkType) -> Unit,
     onRefresh: () -> Unit,
     onCopy: (String) -> Unit
 ) {
@@ -373,6 +385,20 @@ private fun NetworkCard(
                 fontFamily = FontFamily.Monospace,
                 color = batteryColor
             )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Wi-Fi")
+                Switch(
+                    checked = networkType == NetworkManager.NetworkType.ETHERNET,
+                    onCheckedChange = { isEthernet ->
+                        onSwitchNetwork(if (isEthernet) NetworkManager.NetworkType.ETHERNET else NetworkManager.NetworkType.WIFI)
+                    }
+                )
+                Text("Ethernet")
+                Spacer(modifier = Modifier.size(12.dp))
+                Text("Actif: ${networkType.name}", fontWeight = FontWeight.SemiBold)
+            }
+
             UrlRow(label = "API Batterie (JSON)", value = batteryApiUrl, onCopy = onCopy)
             UrlRow(label = "API Formats Camera (JSON)", value = cameraFormatsApiUrl, onCopy = onCopy)
             UrlRow(label = "Flux MJPEG", value = streamUrl, onCopy = onCopy)
