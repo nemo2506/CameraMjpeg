@@ -50,6 +50,15 @@ private val LightColorScheme = lightColorScheme(
     outline = ParkingOutlineLight
 )
 
+/**
+ * CameraMjpegTheme
+ *
+ * Composable theme for the CameraMjpeg app. Applies color scheme and typography based on system theme and dynamic color support.
+ *
+ * @param darkTheme Whether to use dark theme
+ * @param dynamicColor Whether to use dynamic color (Android 12+)
+ * @param content Composable content to display
+ */
 @Composable
 fun CameraMjpegTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
