@@ -9,7 +9,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" android:foregroundServiceType="camera" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
     <uses-feature
@@ -26,6 +26,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CameraMjpeg">
 
+        <!-- Justification foreground service type (Android 14+) -->
+        <meta-data
+            android:name="android.app.foregroundServiceType.camerajustification"
+            android:value="Camera streaming: Required to keep the camera active for MJPEG video streaming and monitoring, even when the app is in background. / Streaming caméra : nécessaire pour maintenir la caméra active pour le flux vidéo MJPEG et le monitoring, même en arrière-plan." />
+
         <service
             android:name=".service.MjpegStreamingService"
             android:enabled="true"
@@ -41,7 +46,6 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
             android:theme="@style/Theme.CameraMjpeg">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
