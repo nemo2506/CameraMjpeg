@@ -340,3 +340,17 @@ adb -s <device-serial> install -r $apk
 > - The viewer HTML title uses dynamic phone model detection.
 > - If `INSTALL_FAILED_USER_RESTRICTED` appears, enable **Install via USB** in Developer options.
 > - If `INSTALL_FAILED_OLDER_SDK` appears, the device is below `minSdk 24`.
+
+> [!IMPORTANT]
+> **🏷️ FR · Services foreground**
+> - Le service foreground caméra est déclaré dans le manifest :
+> ```xml
+> <service
+>     android:name=".service.CameraForegroundService"
+>     android:enabled="true"
+>     android:exported="false"
+>     android:foregroundServiceType="camera" />
+> ```
+> - Il est démarré automatiquement par MainActivity lors du lancement de l'application.
+> - Il garantit la persistance du streaming MJPEG même en arrière-plan.
+

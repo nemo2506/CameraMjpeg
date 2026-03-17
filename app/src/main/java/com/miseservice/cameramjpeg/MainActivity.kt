@@ -1,6 +1,7 @@
 package com.miseservice.cameramjpeg
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -16,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import com.miseservice.cameramjpeg.presentation.AdminViewModel
+import com.miseservice.cameramjpeg.service.CameraForegroundService
 import com.miseservice.cameramjpeg.ui.screen.AdminScreen
 import com.miseservice.cameramjpeg.ui.theme.CameraMjpegTheme
 
@@ -44,6 +46,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // Démarrage du service foreground caméra
+        val intent = Intent(this, CameraForegroundService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Arrêt du service foreground caméra
+        val intent = Intent(this, CameraForegroundService::class.java)
+        intent.action = CameraForegroundService.ACTION_STOP
+        startService(intent)
     }
 }
 

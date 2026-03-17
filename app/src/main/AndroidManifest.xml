@@ -32,6 +32,12 @@
             android:exported="false"
             android:foregroundServiceType="camera" />
 
+        <service
+            android:name=".service.CameraForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
