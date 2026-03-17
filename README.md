@@ -1,6 +1,6 @@
 # 📷 CameraMjpeg
 
-![Android](https://img.shields.io/badge/Android-7.0%2B%20(minSdk%2024%2C%20targetSdk%2036%2C%20compileSdk%2036)-3DDC84?logo=android&logoColor=white)
+![Android](https://img.shields.io/badge/Android-9.0%2B%20(minSdk%2028%2C%20targetSdk%2036%2C%20compileSdk%2036)-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-JVM%2011-7F52FF?logo=kotlin&logoColor=white)
 ![Stream](https://img.shields.io/badge/Stream-MJPEG-0A84FF)
 ![Service](https://img.shields.io/badge/Service-Foreground-FF9F0A)
@@ -53,7 +53,7 @@ flowchart LR
 > Configuration actuelle dans `app/build.gradle.kts` :
 > - `versionName`: `1.0`
 > - `versionCode`: `1`
-> - `minSdk`: `24` (Android 7.0+)
+> - `minSdk`: `28` (Android 9.0+)
 > - `targetSdk`: `36` (Android 14)
 > - `compileSdk`: `36` (Android 14)
 > - Java/Kotlin JVM target : `11`
@@ -246,7 +246,7 @@ flowchart LR
 > Current configuration in `app/build.gradle.kts`:
 > - `versionName`: `1.0`
 > - `versionCode`: `1`
-> - `minSdk`: `24` (Android 7.0+)
+> - `minSdk`: `28` (Android 9.0+)
 > - `targetSdk`: `36` (Android 14)
 > - `compileSdk`: `36` (Android 14)
 > - Java/Kotlin JVM target: `11`
