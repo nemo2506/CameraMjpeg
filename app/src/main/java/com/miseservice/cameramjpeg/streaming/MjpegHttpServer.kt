@@ -18,6 +18,18 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 
+/**
+ * MjpegHttpServer
+ *
+ * HTTP server for streaming MJPEG video and serving monitoring endpoints.
+ * Handles multiple clients, provides status and battery endpoints, and serves a monitoring HTML page.
+ *
+ * @param port TCP port to listen on
+ * @param frameStore Store for the latest JPEG frames
+ * @param batteryStatusProvider Function to provide current battery status
+ * @param faviconProvider Function to provide favicon bytes
+ * @param cameraFormatsProvider Function to provide camera format info as JSON
+ */
 class MjpegHttpServer(
     private val port: Int,
     private val frameStore: FrameStore,
@@ -39,6 +51,9 @@ class MjpegHttpServer(
     private var fpsWindowStartMs: Long = System.currentTimeMillis()
     private var fpsWindowFrames: Int = 0
 
+    /**
+     * Start the HTTP server and begin accepting client connections.
+     */
     fun start() {
         if (acceptJob?.isActive == true) return
         if (!scope.isActive) scope = newScope()
@@ -71,6 +86,9 @@ class MjpegHttpServer(
         }
     }
 
+    /**
+     * Stop the HTTP server and disconnect all clients.
+     */
     fun stop() {
         acceptJob?.cancel()
         acceptJob = null
@@ -80,6 +98,10 @@ class MjpegHttpServer(
         clients.clear()
     }
 
+    /**
+     * Handle a single client connection and route requests to the appropriate handler.
+     * @param client The connected client socket
+     */
     private fun handleClient(client: Socket) {
         try {
             client.use { socket ->
@@ -122,6 +144,10 @@ class MjpegHttpServer(
         }
     }
 
+    /**
+     * Serve the monitoring HTML page to the client.
+     * @param socket The client socket
+     */
     private fun monitorPage(socket: Socket) {
         val pageTitle = escapeHtml(deviceModelTitle())
         val html = """
@@ -231,6 +257,10 @@ class MjpegHttpServer(
         sendText(socket, 200, "text/html; charset=utf-8", html)
     }
 
+    /**
+     * Serve the status endpoint as JSON.
+     * @param socket The client socket
+     */
     private fun status(socket: Socket) {
         val latest = frameStore.latest()
         val uptime = ((System.currentTimeMillis() - startedAtMs) / 1000L).coerceAtLeast(0)
@@ -250,6 +280,10 @@ class MjpegHttpServer(
         sendText(socket, 200, "application/json; charset=utf-8", json)
     }
 
+    /**
+     * Serve the battery status endpoint as JSON.
+     * @param socket The client socket
+     */
     private fun battery(socket: Socket) {
         val battery = batteryStatusProvider()
         if (battery == null) {
@@ -273,6 +307,10 @@ class MjpegHttpServer(
         sendText(socket, 200, "application/json; charset=utf-8", json)
     }
 
+    /**
+     * Serve the camera formats endpoint as JSON.
+     * @param socket The client socket
+     */
     private fun cameraFormats(socket: Socket) {
         val payload = runCatching { cameraFormatsProvider() }
             .getOrElse {
@@ -281,6 +319,10 @@ class MjpegHttpServer(
         sendText(socket, 200, "application/json; charset=utf-8", payload)
     }
 
+    /**
+     * Serve the favicon.ico to the client.
+     * @param socket The client socket
+     */
     private fun favicon(socket: Socket) {
         val icon = faviconProvider()
         if (icon == null || icon.isEmpty()) {
@@ -290,6 +332,10 @@ class MjpegHttpServer(
         sendBytes(socket, 200, "image/png", icon)
     }
 
+    /**
+     * Serve a single JPEG snapshot to the client.
+     * @param socket The client socket
+     */
     private fun snapshot(socket: Socket) {
         val frame = frameStore.latest()
         BufferedOutputStream(socket.getOutputStream()).also { out ->
@@ -313,6 +359,10 @@ class MjpegHttpServer(
         }
     }
 
+    /**
+     * Stream MJPEG frames to the client using multipart/x-mixed-replace.
+     * @param socket The client socket
+     */
     private fun stream(socket: Socket) {
         val boundary = "mjpegframe"
         val out = BufferedOutputStream(socket.getOutputStream())
@@ -351,6 +401,10 @@ class MjpegHttpServer(
         }
     }
 
+    /**
+     * Register a sent frame for metrics (FPS, bytes, etc).
+     * @param size Size of the frame in bytes
+     */
     private fun registerFrameSent(size: Int) {
         synchronized(metricsLock) {
             totalFramesSent += 1
@@ -518,6 +572,17 @@ class MjpegHttpServer(
     }
 }
 
+/**
+ * BatteryStatus
+ *
+ * Data class representing the current battery status for the API endpoint.
+ *
+ * @property levelPercent Battery level as a percentage
+ * @property charging Whether the device is charging
+ * @property status String status (e.g. "charging", "discharging")
+ * @property temperatureC Battery temperature in Celsius, nullable
+ * @property timestampMs Timestamp in milliseconds
+ */
 data class BatteryStatus(
     val levelPercent: Int,
     val charging: Boolean,
