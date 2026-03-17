@@ -148,7 +148,7 @@ class MjpegHttpServer(
      * @param socket The client socket
      */
     private fun monitorPage(socket: Socket) {
-        val pageTitle = escapeHtml(deviceModelTitle())
+        val pageTitle = escapeHtml(deviceModelNumber())
         val html = """
             <!DOCTYPE html>
             <html>
@@ -479,6 +479,13 @@ class MjpegHttpServer(
                 ?.toMarketingName()
                 ?.takeIf { it.isNotBlank() }
                 ?: "Camera"
+        }
+
+        /**
+         * Retourne le numéro du modèle de l'appareil (Build.MODEL nettoyé).
+         */
+        fun deviceModelNumber(): String {
+            return Build.MODEL.cleanDeviceNamePart() ?: "Appareil"
         }
 
         fun String?.cleanDeviceNamePart(): String? {
