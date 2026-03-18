@@ -15,11 +15,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import com.miseservice.cameramjpeg.presentation.AdminViewModel
 import com.miseservice.cameramjpeg.service.CameraForegroundService
 import com.miseservice.cameramjpeg.ui.screen.AdminScreen
 import com.miseservice.cameramjpeg.ui.theme.CameraMjpegTheme
+import com.miseservice.cameramjpeg.util.NetworkManager
 
 /**
  * Main activity for the CameraMjpeg application.
@@ -99,11 +102,13 @@ private fun MainContent(viewModel: AdminViewModel, modifier: Modifier = Modifier
     }.toTypedArray()
 
     val hasPermissions = viewModel.hasRequiredPermissions()
+    val context = LocalContext.current
+    val networkManager = remember { NetworkManager(context) }
 
     LaunchedEffect(Unit) {
         if (!hasPermissions) {
             launcher.launch(requestedPermissions)
         }
     }
-    AdminScreen(viewModel = viewModel, modifier = modifier)
+    AdminScreen(viewModel = viewModel, networkManager = networkManager, modifier = modifier)
 }
