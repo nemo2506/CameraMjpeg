@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -46,6 +47,10 @@ class MainActivity : ComponentActivity() {
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Flags fenêtre en premier, avant tout rendu
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         enableEdgeToEdge()
         setContent {
             CameraMjpegTheme {
@@ -57,7 +62,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // Start foreground camera service
+
+        // Démarrage du service foreground
         val intent = Intent(this, CameraForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
@@ -71,6 +77,10 @@ class MainActivity : ComponentActivity() {
      */
     override fun onDestroy() {
         super.onDestroy()
+
+        // Libérer le flag écran allumé
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         // Stop foreground camera service
         val intent = Intent(this, CameraForegroundService::class.java)
         intent.action = CameraForegroundService.ACTION_STOP
