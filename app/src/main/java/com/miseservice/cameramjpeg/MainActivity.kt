@@ -1,10 +1,14 @@
 package com.miseservice.cameramjpeg
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.WindowManager
+import androidx.core.net.toUri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -33,6 +37,7 @@ import com.miseservice.cameramjpeg.util.NetworkManager
  * - Starts CameraForegroundService for camera streaming protection.
  * - Sets up Compose UI with AdminViewModel.
  * - Handles lifecycle events (onCreate, onDestroy).
+ * - Guides user to disable battery optimization via system settings (Play Store compliant).
  *
  * @constructor Default constructor for ComponentActivity.
  */
@@ -51,6 +56,10 @@ class MainActivity : ComponentActivity() {
         // Flags fenêtre en premier, avant tout rendu
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // Guider l'utilisateur vers les paramètres batterie si nécessaire
+        // (Play Store compliant — on redirige vers les settings, on ne force pas)
+        checkBatteryOptimization()
+
         enableEdgeToEdge()
         setContent {
             CameraMjpegTheme {
@@ -65,10 +74,35 @@ class MainActivity : ComponentActivity() {
 
         // Démarrage du service foreground
         val intent = Intent(this, CameraForegroundService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        startForegroundService(intent)
+    }
+
+    /**
+     * Checks if battery optimization is active for this app.
+     * If so, redirects the user to the app's battery settings page
+     * so they can manually disable optimization.
+     *
+     * Play Store compliant:
+     * - NO REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission needed
+     * - Opens ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS (liste globale des apps)
+     * - Fallback sur ACTION_APPLICATION_DETAILS_SETTINGS
+     * - L'utilisateur garde le contrôle total
+     */
+    private fun checkBatteryOptimization() {
+        val powerManager = getSystemService(PowerManager::class.java)
+        if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+            // try/catch remplace resolveActivity() déprécié depuis API 33
+            // et contourne le package visibility filtering (Android 11+)
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: ActivityNotFoundException) {
+                // Fallback : détail de l'app dans les paramètres système
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = "package:$packageName".toUri()
+                    }
+                )
+            }
         }
     }
 
@@ -89,9 +123,9 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Composable principal de l’application. Gère les permissions et affiche l’écran d’administration.
+ * Composable principal de l'application. Gère les permissions et affiche l'écran d'administration.
  *
- * @param viewModel Instance du ViewModel d’administration
+ * @param viewModel Instance du ViewModel d'administration
  * @param modifier Modificateur de layout
  */
 @Composable
