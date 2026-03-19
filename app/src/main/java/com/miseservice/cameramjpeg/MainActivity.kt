@@ -66,19 +66,23 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     MainContent(
                         viewModel = viewModel,
-                        modifier = Modifier.padding(innerPadding)
+                        modifier = Modifier.padding(innerPadding),
+                        onCameraPermissionGranted = { startCameraForegroundService() }
                     )
                 }
             }
         }
-
-        // Démarrage du service foreground
-        val intent = Intent(this, CameraForegroundService::class.java)
-        startForegroundService(intent)
     }
 
     /**
-     * Checks if battery optimization is active for this app.
+     * Starts the CameraForegroundService.
+     * Must be called only after CAMERA permission is granted (Android 14+ requirement).
+     */
+    private fun startCameraForegroundService() {
+        startForegroundService(Intent(this, CameraForegroundService::class.java))
+    }
+
+    /**
      * If so, redirects the user to the app's battery settings page
      * so they can manually disable optimization.
      *
@@ -129,10 +133,19 @@ class MainActivity : ComponentActivity() {
  * @param modifier Modificateur de layout
  */
 @Composable
-private fun MainContent(viewModel: AdminViewModel, modifier: Modifier = Modifier) {
+private fun MainContent(
+    viewModel: AdminViewModel,
+    modifier: Modifier = Modifier,
+    onCameraPermissionGranted: () -> Unit = {}
+) {
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) {
+    ) { permissions ->
+        // Démarrer le service uniquement si la permission caméra est accordée
+        // Android 14+ : FGS type camera interdit sans permission CAMERA active
+        if (permissions[Manifest.permission.CAMERA] == true) {
+            onCameraPermissionGranted()
+        }
         viewModel.refreshNetworkInfo()
     }
 
@@ -150,7 +163,10 @@ private fun MainContent(viewModel: AdminViewModel, modifier: Modifier = Modifier
     val networkManager = remember { NetworkManager(context) }
 
     LaunchedEffect(Unit) {
-        if (!hasPermissions) {
+        if (hasPermissions) {
+            // Permission déjà accordée (relancement app) — démarrer le service directement
+            onCameraPermissionGranted()
+        } else {
             launcher.launch(requestedPermissions)
         }
     }

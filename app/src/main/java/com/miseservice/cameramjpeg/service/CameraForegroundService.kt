@@ -21,7 +21,7 @@ import androidx.core.app.NotificationCompat
  * Usage:
  * - Declare in AndroidManifest.xml with foregroundServiceType="camera".
  * - Start from MainActivity or CameraStreamController.
- * - Notification channel is created for Android O+ (API 26+).
+ * - Notification channel is created automatically (minSdk 28 = Android 9, channel always required).
  * - Use ACTION_STOP intent to stop the service and remove the notification.
  *
  * WakeLock:
@@ -35,8 +35,9 @@ import androidx.core.app.NotificationCompat
  * - Not dismissible, protects streaming from OS background restrictions.
  *
  * API Compatibility:
- * - Uses ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA on API 30+.
- * - Fallback to classic startForeground for lower APIs.
+ * - Uses ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA on API 29+ (Android 10+).
+ * - Fallback to classic startForeground for API 28 (Android 9).
+ * - Also requires android.permission.FOREGROUND_SERVICE_CAMERA in manifest (Android 14+).
  *
  * @author CameraMjpeg contributors
  * @since 2026-03-17
@@ -44,6 +45,7 @@ import androidx.core.app.NotificationCompat
 class CameraForegroundService : Service() {
     // WakeLock for keeping device awake during streaming
     private var wakeLock: PowerManager.WakeLock? = null
+
     companion object {
         /** Notification channel ID for foreground service. */
         const val CHANNEL_ID = "camera_foreground_channel"
@@ -56,13 +58,17 @@ class CameraForegroundService : Service() {
     /**
      * Called when the service is created.
      * Sets up notification channel and acquires WakeLock.
+     * minSdk 28 — notification channel always required, no version check needed.
      */
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         // Acquire WakeLock (1 hour timeout for safety)
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CameraStream::WakeLock")
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "CameraStream::WakeLock"
+        )
         wakeLock?.acquire(60 * 60 * 1000)
     }
 
@@ -84,15 +90,16 @@ class CameraForegroundService : Service() {
 
         val notification = buildNotification()
 
-        // Android 10+ requires foreground service type for camera
-        if (Build.VERSION.SDK_INT >= 30) {
-            // Only call on API 30+
+        // FOREGROUND_SERVICE_TYPE_CAMERA available since API 29 (Android 10 = Q)
+        // minSdk is 28 (Android 9) — only API 28 falls back to classic startForeground
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             )
         } else {
+            // API 28 only — Android 9
             startForeground(NOTIFICATION_ID, notification)
         }
 
@@ -139,20 +146,19 @@ class CameraForegroundService : Service() {
     }
 
     /**
-     * Creates the notification channel for Android O+ (API 26+).
+     * Creates the notification channel.
+     * minSdk 28 (Android 9) — NotificationChannel always required, no version check needed.
      */
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Streaming Caméra",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                setShowBadge(false)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            }
-            getSystemService(NotificationManager::class.java)
-                ?.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Streaming Caméra",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            setShowBadge(false)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
+        getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(channel)
     }
 }
