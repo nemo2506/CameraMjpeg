@@ -3,12 +3,13 @@ package com.miseservice.cameramjpeg.streaming
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.ImageFormat
-import android.graphics.YuvImage
 import android.graphics.Rect
+import android.graphics.YuvImage
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager as AndroidCameraManager
+import android.hardware.camera2.CaptureRequest
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
@@ -16,22 +17,65 @@ import android.util.Log
 import android.util.Size
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * CameraStreamController
  *
- * Controls the camera stream for MJPEG output. Handles camera initialization, frame acquisition,
- * YUV to NV21 conversion, rotation, and JPEG encoding. Buffers are reused for performance.
+ * Controls the camera stream for MJPEG output. Handles camera initialisation,
+ * frame acquisition, YUV→NV21 conversion, 180° rotation, and JPEG encoding.
  *
- * @param context Application context
- * @param frameStore FrameStore instance to publish JPEG frames
+ * Memory strategy (OOM fix):
+ * - [nv21Buffer] and [rotatedBuffer] are allocated once per stream resolution
+ *   and reused across frames.
+ * - [jpegOutputStream] is pre-allocated with a generous initial capacity and
+ *   reset() between frames — avoids the double-copy that ByteArrayOutputStream
+ *   + toByteArray() causes when the stream needs to grow.
+ * - [frameInProgress] is an atomic guard: if the background thread is still
+ *   encoding the previous frame, the new image is dropped immediately.
+ *   This prevents frame accumulation when encoding is slower than capture.
+ * - Resolution is capped at [MAX_STREAM_WIDTH] × [MAX_STREAM_HEIGHT] so that
+ *   per-frame heap demand stays predictable.
+ * - ImageReader maxImages is set to 2 — the minimum to avoid stalling the
+ *   camera pipeline without allowing more than one extra frame to queue up.
+ *
+ * @param context   Application context (used to obtain the CameraManager service).
+ * @param frameStore FrameStore instance to publish encoded JPEG frames.
  */
 class CameraStreamController(
     context: Context,
     private val frameStore: FrameStore
 ) {
-    /** Android CameraManager service */
-    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as AndroidCameraManager
+
+    // -------------------------------------------------------------------------
+    // Constants
+    // -------------------------------------------------------------------------
+
+    private companion object {
+        const val TAG = "CameraStreamController"
+
+        /** Cap the stream resolution to keep per-frame allocations predictable. */
+        const val MAX_STREAM_WIDTH  = 1280
+        const val MAX_STREAM_HEIGHT = 720
+
+        /** Initial capacity for the reusable JPEG output stream (1 MB). */
+        const val JPEG_INITIAL_CAPACITY = 1_000_000
+
+        /** Number of ImageReader buffers — 2 prevents camera stalls without queuing frames. */
+        const val IMAGE_READER_MAX_IMAGES = 2
+    }
+
+    // -------------------------------------------------------------------------
+    // System services
+    // -------------------------------------------------------------------------
+
+    private val cameraManager =
+        context.getSystemService(Context.CAMERA_SERVICE) as AndroidCameraManager
+
+    // -------------------------------------------------------------------------
+    // Camera state
+    // -------------------------------------------------------------------------
 
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
@@ -41,35 +85,56 @@ class CameraStreamController(
 
     private var currentCameraId = ""
     private var isUsingFrontCamera = true
-    private var jpegQuality: Int = 80  // JPEG compression quality (default: 80)
-    /**
-     * Reusable buffers for NV21 and rotated NV21 data.
-     * These are allocated once per stream size to reduce GC pressure.
-     */
-    private var nv21Buffer: ByteArray?    = null
+    private var jpegQuality: Int = 80
+
+    // -------------------------------------------------------------------------
+    // Reusable frame buffers — allocated once per stream resolution (OOM fix)
+    // -------------------------------------------------------------------------
+
+    private var nv21Buffer: ByteArray? = null
     private var rotatedBuffer: ByteArray? = null
 
     /**
-     * CameraDevice callback to handle camera state changes.
+     * Reused across frames. reset() empties it without freeing the internal
+     * byte array, so no re-allocation occurs between frames.
      */
+    private val jpegOutputStream = ByteArrayOutputStream(JPEG_INITIAL_CAPACITY)
+
+    /**
+     * Atomic guard: true while a frame is being encoded.
+     * When true, incoming frames are dropped to avoid memory build-up.
+     */
+    private val frameInProgress = AtomicBoolean(false)
+
+    // -------------------------------------------------------------------------
+    // Camera device callback
+    // -------------------------------------------------------------------------
+
     private val cameraDeviceCallback = object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
             cameraDevice = camera
             startCaptureSession(camera)
         }
         override fun onDisconnected(camera: CameraDevice) {
-            camera.close(); cameraDevice = null
+            camera.close()
+            cameraDevice = null
         }
         override fun onError(camera: CameraDevice, error: Int) {
-            Log.e(TAG, "Camera error: $error")
-            camera.close(); cameraDevice = null
+            Log.e(TAG, "Camera device error: $error")
+            camera.close()
+            cameraDevice = null
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
     /**
-     * Start the camera stream with the selected camera and JPEG quality.
-     * @param useFrontCamera true to use the front camera, false for back
-     * @param jpegQuality JPEG compression quality (0-100)
+     * Start the camera stream.
+     *
+     * @param useFrontCamera true to use the front-facing camera.
+     * @param jpegQuality    JPEG compression quality in [0, 100].
      */
     fun start(useFrontCamera: Boolean, jpegQuality: Int) {
         isUsingFrontCamera = useFrontCamera
@@ -78,8 +143,9 @@ class CameraStreamController(
     }
 
     /**
-     * Switch between front and back camera.
-     * @param useFront true for front camera, false for back
+     * Switch between front and back cameras without stopping the service.
+     *
+     * @param useFront true for the front-facing camera.
      */
     fun switchCamera(useFront: Boolean) {
         isUsingFrontCamera = useFront
@@ -88,103 +154,217 @@ class CameraStreamController(
     }
 
     /**
-     * Update JPEG compression quality.
-     * @param newQuality JPEG quality (0-100)
+     * Update JPEG compression quality on the fly (no restart needed).
+     *
+     * @param newQuality JPEG quality in [0, 100].
      */
-    fun updateQuality(newQuality: Int) { jpegQuality = newQuality }
-    /** Stop the camera stream and release resources. */
-    fun stop() { stopInternal() }
+    fun updateQuality(newQuality: Int) {
+        jpegQuality = newQuality
+    }
+
+    /** Stop the camera stream and release all resources. */
+    fun stop() = stopInternal()
+
+    // -------------------------------------------------------------------------
+    // Camera initialisation
+    // -------------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
     private fun startCamera() {
         startBackgroundThread()
-        currentCameraId = getCameraId(isUsingFrontCamera)
 
+        currentCameraId = getCameraId(isUsingFrontCamera)
         val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
         val streamConfigs   = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
 
-        /**
-         * Select the maximum available resolution for streaming (YUV_420_888).
-         * Fallback to 1280x720 if not available.
-         */
+        // Cap resolution to MAX_STREAM_WIDTH × MAX_STREAM_HEIGHT.
+        // Using the maximum native resolution causes ~5 MB/frame allocations → OOM.
         val size: Size = streamConfigs
             ?.getOutputSizes(ImageFormat.YUV_420_888)
+            ?.filter { it.width <= MAX_STREAM_WIDTH && it.height <= MAX_STREAM_HEIGHT }
             ?.maxByOrNull { it.width * it.height }
-            ?: Size(1280, 720)
+            ?: Size(MAX_STREAM_WIDTH, MAX_STREAM_HEIGHT)
 
-        Log.d(TAG, "Stream size: ${size.width}x${size.height}")
+        Log.d(TAG, "Stream resolution: ${size.width}×${size.height}")
 
-        // Allocate buffers for NV21 and rotated NV21 data
-        val ySize = size.width * size.height
-        nv21Buffer    = ByteArray(ySize + ySize / 2)
-        rotatedBuffer = ByteArray(ySize + ySize / 2)
+        // Allocate NV21 buffers once for this resolution.
+        val pixelCount = size.width * size.height
+        nv21Buffer    = ByteArray(pixelCount + pixelCount / 2)
+        rotatedBuffer = ByteArray(pixelCount + pixelCount / 2)
 
-        /**
-         * Create an ImageReader for YUV_420_888 frames and set the listener to process each frame.
-         * The listener converts the image to NV21, rotates it 180°, encodes to JPEG, and publishes.
-         */
+        // maxImages = 2: one being processed, one queued — no more accumulation.
         imageReader = ImageReader.newInstance(
-            size.width, size.height, ImageFormat.YUV_420_888, 3
+            size.width, size.height, ImageFormat.YUV_420_888, IMAGE_READER_MAX_IMAGES
         ).also { reader ->
-            reader.setOnImageAvailableListener({ r ->
-                val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
-                try {
-                    imageToNV21Fast(image, nv21Buffer!!, size.width, size.height)
-                    image.close()
-
-                    rotateNv21_180InPlace(
-                        nv21Buffer!!, rotatedBuffer!!,
-                        size.width, size.height
-                    )
-
-                    val jpeg = nv21ToJpeg(rotatedBuffer!!, size.width, size.height)
-                    frameStore.publish(jpeg)
-
-                } catch (e: Exception) {
-                    try { image.close() } catch (_: Exception) {}
-                    Log.e(TAG, "Error processing image: ${e.message}", e)
-                }
-            }, backgroundHandler)
+            reader.setOnImageAvailableListener(
+                { r -> onImageAvailable(r, size) },
+                backgroundHandler
+            )
         }
 
         cameraManager.openCamera(currentCameraId, cameraDeviceCallback, backgroundHandler)
     }
 
+    // -------------------------------------------------------------------------
+    // Frame processing
+    // -------------------------------------------------------------------------
+
     /**
-     * Start a camera capture session for the given camera device.
-     * Configures the session for preview and disables unnecessary processing.
-     * @param camera The opened CameraDevice
+     * Called by ImageReader for every new frame.
+     *
+     * Back-pressure guard: if [frameInProgress] is already set, the image is
+     * closed immediately and the frame is dropped. This prevents frames from
+     * piling up in memory when encoding lags behind capture.
      */
+    private fun onImageAvailable(reader: ImageReader, size: Size) {
+        // acquireLatestImage() discards older buffered frames automatically.
+        val image = reader.acquireLatestImage() ?: return
+
+        if (!frameInProgress.compareAndSet(false, true)) {
+            // Encoder still busy — drop this frame to avoid OOM.
+            image.close()
+            return
+        }
+
+        try {
+            val nv21     = nv21Buffer    ?: return
+            val rotated  = rotatedBuffer ?: return
+
+            imageToNV21Fast(image, nv21, size.width, size.height)
+            image.close()
+
+            rotateNv21_180(nv21, rotated, size.width, size.height)
+
+            val jpeg = nv21ToJpeg(rotated, size.width, size.height)
+            frameStore.publish(jpeg)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Frame processing error: ${e.message}", e)
+            try { image.close() } catch (_: Exception) {}
+        } finally {
+            frameInProgress.set(false)
+        }
+    }
+
+    /**
+     * Convert a YUV_420_888 [android.media.Image] to NV21 into [nv21].
+     *
+     * Uses bulk ByteBuffer.get() when the row stride matches the image width
+     * to avoid per-pixel overhead.
+     */
+    private fun imageToNV21Fast(
+        image: android.media.Image,
+        nv21: ByteArray,
+        width: Int,
+        height: Int
+    ) {
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+        val ySize  = width * height
+
+        // --- Y plane ---
+        val yBuffer = yPlane.buffer
+        if (yPlane.rowStride == width) {
+            yBuffer.get(nv21, 0, ySize)
+        } else {
+            var offset = 0
+            repeat(height) { row ->
+                yBuffer.position(row * yPlane.rowStride)
+                yBuffer.get(nv21, offset, width)
+                offset += width
+            }
+        }
+
+        // --- VU interleave ---
+        val vBuffer       = vPlane.buffer
+        val uBuffer       = uPlane.buffer
+        val uvRowStride   = uPlane.rowStride
+        val uvPixelStride = uPlane.pixelStride
+        var offset        = ySize
+
+        if (uvPixelStride == 1) {
+            // Planar U / V — interleave manually.
+            repeat(height / 2) { row ->
+                vBuffer.position(row * uvRowStride)
+                uBuffer.position(row * uvRowStride)
+                repeat(width / 2) { col ->
+                    nv21[offset++] = vBuffer.get(col)
+                    nv21[offset++] = uBuffer.get(col)
+                }
+            }
+        } else {
+            // Already semi-planar (VU) — bulk copy per row.
+            repeat(height / 2) { row ->
+                vBuffer.position(row * uvRowStride)
+                vBuffer.get(nv21, offset, width - 1)
+                offset += width
+            }
+        }
+    }
+
+    /**
+     * Rotate an NV21 buffer 180° into [dst] using a simple reverse pass.
+     * Both Y and UV planes are handled correctly.
+     */
+    private fun rotateNv21_180(src: ByteArray, dst: ByteArray, width: Int, height: Int) {
+        val ySize = width * height
+        var out   = 0
+
+        // Reverse Y plane.
+        for (i in ySize - 1 downTo 0) {
+            dst[out++] = src[i]
+        }
+        // Reverse UV pairs (keep V/U order intact).
+        for (i in src.size - 2 downTo ySize step 2) {
+            dst[out++] = src[i]
+            dst[out++] = src[i + 1]
+        }
+    }
+
+    /**
+     * Encode an NV21 buffer to JPEG using [jpegOutputStream].
+     *
+     * [jpegOutputStream] is reset() before each call — its internal byte array
+     * is reused without re-allocation, eliminating the double-copy that a fresh
+     * ByteArrayOutputStream would cause.
+     */
+    private fun nv21ToJpeg(nv21: ByteArray, width: Int, height: Int): ByteArray {
+        jpegOutputStream.reset()
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
+        yuvImage.compressToJpeg(Rect(0, 0, width, height), jpegQuality, jpegOutputStream)
+        return jpegOutputStream.toByteArray()
+    }
+
+    // -------------------------------------------------------------------------
+    // Capture session
+    // -------------------------------------------------------------------------
+
+    @Suppress("DEPRECATION")
     private fun startCaptureSession(camera: CameraDevice) {
         val surface = imageReader?.surface ?: return
 
-        @Suppress("DEPRECATION")
         camera.createCaptureSession(
             listOf(surface),
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
                     captureSession = session
                     try {
-                        val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                        requestBuilder.addTarget(surface)
-                        // Disable edge, noise, and aberration corrections for performance
-                        requestBuilder.set(
-                            android.hardware.camera2.CaptureRequest.EDGE_MODE,
-                            android.hardware.camera2.CaptureRequest.EDGE_MODE_OFF
-                        )
-                        requestBuilder.set(
-                            android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE,
-                            android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE_OFF
-                        )
-                        requestBuilder.set(
-                            android.hardware.camera2.CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE,
-                            android.hardware.camera2.CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF
-                        )
-                        requestBuilder.set(
-                            android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE,
-                            android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
-                        )
-                        val request = requestBuilder.build()
+                        val request = camera
+                            .createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                            .apply {
+                                addTarget(surface)
+                                // Disable post-processing — reduces per-frame CPU work.
+                                set(CaptureRequest.EDGE_MODE,
+                                    CaptureRequest.EDGE_MODE_OFF)
+                                set(CaptureRequest.NOISE_REDUCTION_MODE,
+                                    CaptureRequest.NOISE_REDUCTION_MODE_OFF)
+                                set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE,
+                                    CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF)
+                                set(CaptureRequest.CONTROL_AF_MODE,
+                                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                            }
+                            .build()
                         session.setRepeatingRequest(request, null, backgroundHandler)
                     } catch (e: Exception) {
                         Log.e(TAG, "Repeating request failed: ${e.message}", e)
@@ -198,159 +378,72 @@ class CameraStreamController(
         )
     }
 
-    /**
-     * Convert a YUV_420_888 Image to NV21 format using the provided buffer.
-     * This method avoids allocations and uses bulk copy when possible.
-     * @param image The YUV_420_888 Image
-     * @param nv21 The output NV21 buffer
-     * @param width Image width
-     * @param height Image height
-     */
-    private fun imageToNV21Fast(image: android.media.Image, nv21: ByteArray, width: Int, height: Int) {
-        val ySize  = width * height
-        val yPlane = image.planes[0]
-        val uPlane = image.planes[1]
-        val vPlane = image.planes[2]
+    // -------------------------------------------------------------------------
+    // Resource management
+    // -------------------------------------------------------------------------
 
-        // Copy Y plane
-        val yBuffer = yPlane.buffer
-        if (yPlane.rowStride == width) {
-            yBuffer.get(nv21, 0, ySize)
-        } else {
-            var offset = 0
-            repeat(height) { row ->
-                yBuffer.position(row * yPlane.rowStride)
-                yBuffer.get(nv21, offset, width)
-                offset += width
-            }
-        }
-
-        // Copy interleaved VU planes
-        val vBuffer       = vPlane.buffer
-        val uBuffer       = uPlane.buffer
-        val uvRowStride   = uPlane.rowStride
-        val uvPixelStride = uPlane.pixelStride
-        var offset        = ySize
-
-        if (uvPixelStride == 1) {
-            repeat(height / 2) { row ->
-                vBuffer.position(row * uvRowStride)
-                uBuffer.position(row * uvRowStride)
-                repeat(width / 2) { col ->
-                    nv21[offset++] = vBuffer.get(col)
-                    nv21[offset++] = uBuffer.get(col)
-                }
-            }
-        } else {
-            // Already interleaved, bulk copy
-            repeat(height / 2) { row ->
-                vBuffer.position(row * uvRowStride)
-                vBuffer.get(nv21, offset, width - 1)
-                offset += width
-            }
-        }
-    }
-
-    /**
-     * Rotate an NV21 image 180 degrees in-place using a pre-allocated buffer.
-     * @param src Source NV21 buffer
-     * @param dst Destination buffer for rotated NV21
-     * @param width Image width
-     * @param height Image height
-     */
-    private fun rotateNv21_180InPlace(src: ByteArray, dst: ByteArray, width: Int, height: Int) {
-        val ySize = width * height
-        var out   = 0
-
-        for (i in ySize - 1 downTo 0) {
-            dst[out++] = src[i]
-        }
-        for (i in src.size - 2 downTo ySize step 2) {
-            dst[out++] = src[i]
-            dst[out++] = src[i + 1]
-        }
-    }
-
-    /**
-     * Encode an NV21 image to JPEG using the specified quality.
-     * @param nv21 NV21 image buffer
-     * @param width Image width
-     * @param height Image height
-     * @return JPEG-encoded byte array
-     */
-    private fun nv21ToJpeg(nv21: ByteArray, width: Int, height: Int): ByteArray {
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-        val out = java.io.ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, width, height), jpegQuality, out)
-        return out.toByteArray()
-    }
-
-    /**
-     * Retourne la liste des formats de sortie supportés par la caméra courante au format JSON.
-     *
-     * @return Chaîne JSON décrivant les résolutions et formats disponibles
-     */
-    fun buildCameraOutputMapJson(): String {
-        val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
-        val streamConfigs = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        val outputSizes = streamConfigs?.getOutputSizes(ImageFormat.YUV_420_888)
-        val formats = outputSizes?.map {
-            JSONObject().apply {
-                put("width", it.width)
-                put("height", it.height)
-            }
-        } ?: emptyList<JSONObject>()
-        val root = JSONObject()
-        root.put("ok", true)
-        root.put("formats", JSONArray(formats))
-        return root.toString()
-    }
-
-    /**
-     * Stop and release all camera and background resources.
-     */
     private fun stopInternal() {
         captureSession?.close(); captureSession = null
         cameraDevice?.close();   cameraDevice   = null
         imageReader?.close();    imageReader     = null
+        nv21Buffer    = null
+        rotatedBuffer = null
+        jpegOutputStream.reset()
+        frameInProgress.set(false)
         stopBackgroundThread()
     }
 
-    /**
-     * Start a background thread for camera operations.
-     */
     private fun startBackgroundThread() {
-        handlerThread = HandlerThread("CameraBackground", android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY).also {
+        handlerThread = HandlerThread(
+            "CameraBackground",
+            android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY
+        ).also {
             it.start()
             backgroundHandler = Handler(it.looper)
         }
     }
 
-    /**
-     * Stop the background thread and release resources.
-     */
     private fun stopBackgroundThread() {
         handlerThread?.quitSafely()
         try { handlerThread?.join() } catch (_: InterruptedException) {}
-        handlerThread = null
+        handlerThread   = null
         backgroundHandler = null
     }
 
+    // -------------------------------------------------------------------------
+    // Utilities
+    // -------------------------------------------------------------------------
+
     /**
-     * Get the camera ID for the requested facing (front or back).
-     * @param useFront true for front camera, false for back
-     * @return Camera ID string
+     * Returns the camera ID for the requested lens facing.
+     * Throws [NoSuchElementException] if no matching camera is found.
      */
     private fun getCameraId(useFront: Boolean): String {
         val facing = if (useFront) CameraCharacteristics.LENS_FACING_FRONT
-                     else          CameraCharacteristics.LENS_FACING_BACK
+        else          CameraCharacteristics.LENS_FACING_BACK
         return cameraManager.cameraIdList.first { id ->
             cameraManager.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.LENS_FACING) == facing
         }
     }
 
-    private companion object {
-        const val TAG = "CameraStreamController"
+    /**
+     * Returns a JSON description of the YUV_420_888 output resolutions
+     * available on the current camera, capped at [MAX_STREAM_WIDTH] ×
+     * [MAX_STREAM_HEIGHT].
+     */
+    fun buildCameraOutputMapJson(): String {
+        val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
+        val streamConfigs   = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val formats = streamConfigs
+            ?.getOutputSizes(ImageFormat.YUV_420_888)
+            ?.filter { it.width <= MAX_STREAM_WIDTH && it.height <= MAX_STREAM_HEIGHT }
+            ?.map { JSONObject().apply { put("width", it.width); put("height", it.height) } }
+            ?: emptyList()
+
+        return JSONObject().apply {
+            put("ok", true)
+            put("formats", JSONArray(formats))
+        }.toString()
     }
 }
