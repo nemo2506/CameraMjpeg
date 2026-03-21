@@ -50,28 +50,29 @@ object ExifInjector {
 
     // ── JPEG / EXIF markers ───────────────────────────────────────────────────
 
-    private const val MARKER_SOI:  Byte = 0xD8.toByte()   // Start Of Image
-    private const val MARKER_FF:   Byte = 0xFF.toByte()   // Marker prefix
+    private const val MARKER_SOI: Byte = 0xD8.toByte()   // Start Of Image
+    private const val MARKER_FF: Byte = 0xFF.toByte()   // Marker prefix
     private const val MARKER_APP1: Byte = 0xE1.toByte()   // APP1 (EXIF)
 
     // ── EXIF IFD tags ─────────────────────────────────────────────────────────
 
-    private const val TAG_ORIENTATION       = 0x0112
-    private const val TAG_DATETIME          = 0x0132
-    private const val TAG_MAKE              = 0x010F
+    private const val TAG_ORIENTATION = 0x0112
+    private const val TAG_DATETIME = 0x0132
+    private const val TAG_MAKE = 0x010F
 
-    private const val TAG_EXIF_IFD_POINTER  = 0x8769
+    private const val TAG_EXIF_IFD_POINTER = 0x8769
     private const val TAG_DATETIME_ORIGINAL = 0x9003
-    private const val TAG_EXPOSURE_TIME     = 0x829A
-    private const val TAG_FNUMBER           = 0x829D
-    private const val TAG_ISO               = 0x8827
+    private const val TAG_EXPOSURE_TIME = 0x829A
+    private const val TAG_FNUMBER = 0x829D
+    private const val TAG_ISO = 0x8827
 
     // ── EXIF types ────────────────────────────────────────────────────────────
 
-    private const val TYPE_SHORT    = 3.toShort()
-    private const val TYPE_LONG     = 4.toShort()
+    private const val TYPE_SHORT = 3.toShort()
+    private const val TYPE_LONG = 4.toShort()
     private const val TYPE_RATIONAL = 5.toShort()
-    private const val TYPE_ASCII    = 2.toShort()
+    private const val TYPE_ASCII = 2.toShort()
+
 
     // ── DateTime formatter ────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ object ExifInjector {
             return jpeg
         }
 
-        val now         = DATE_FORMAT.format(Date())
+        val now = DATE_FORMAT.format(Date())
         val orientation = rotationToExifOrientation(rotationDegrees)
 
         // Optional capture metadata.
@@ -184,9 +185,17 @@ object ExifInjector {
         // to the start of the TIFF header.
         val tiff = ByteArrayOutputStream(256)
 
-        fun writeShortLE(v: Int)  { tiff.write(v and 0xFF); tiff.write((v shr 8) and 0xFF) }
-        fun writeIntLE(v: Int)    { writeShortLE(v and 0xFFFF); writeShortLE((v shr 16) and 0xFFFF) }
-        fun writeLongLE(v: Long)  { writeIntLE((v and 0xFFFFFFFFL).toInt()); writeIntLE((v shr 32).toInt()) }
+        fun writeShortLE(v: Int) {
+            tiff.write(v and 0xFF); tiff.write((v shr 8) and 0xFF)
+        }
+
+        fun writeIntLE(v: Int) {
+            writeShortLE(v and 0xFFFF); writeShortLE((v shr 16) and 0xFFFF)
+        }
+
+        fun writeLongLE(v: Long) {
+            writeIntLE((v and 0xFFFFFFFFL).toInt()); writeIntLE((v shr 32).toInt())
+        }
 
         // TIFF magic
         tiff.write(byteArrayOf(0x49, 0x49))  // 'II' little-endian
@@ -211,9 +220,9 @@ object ExifInjector {
 
         // IFD0 entries (ExifIFD pointer added after offset computation).
         val ifd0Entries = mutableListOf<Entry>()
-        ifd0Entries += Entry(TAG_MAKE,        TYPE_ASCII, makeBytes.size,  makeBytes)
-        ifd0Entries += Entry(TAG_DATETIME,    TYPE_ASCII, dateBytes.size,  dateBytes)
-        ifd0Entries += Entry(TAG_ORIENTATION, TYPE_SHORT, 1,               orientation)
+        ifd0Entries += Entry(TAG_MAKE, TYPE_ASCII, makeBytes.size, makeBytes)
+        ifd0Entries += Entry(TAG_DATETIME, TYPE_ASCII, dateBytes.size, dateBytes)
+        ifd0Entries += Entry(TAG_ORIENTATION, TYPE_SHORT, 1, orientation)
         // TAG_EXIF_IFD_POINTER added below once offset is known.
 
         // ── Offset calculation ────────────────────────────────────────────
@@ -223,33 +232,37 @@ object ExifInjector {
         //   <after ifd0 values>        → ExifIFD start
         //   <after exif IFD>           → ExifIFD value area
 
-        val ifd0Count   = ifd0Entries.size + 1   // +1 for ExifIFD pointer
-        val ifd0Start   = 8
-        val ifd0ValOff  = ifd0Start + 2 + ifd0Count * 12 + 4
-        var cursor      = ifd0ValOff
+        val ifd0Count = ifd0Entries.size + 1   // +1 for ExifIFD pointer
+        val ifd0Start = 8
+        val ifd0ValOff = ifd0Start + 2 + ifd0Count * 12 + 4
+        var cursor = ifd0ValOff
 
         // Reserve space for IFD0 variable-length values and record their offsets.
         val ifd0Placements = mutableListOf<Placement>()
         for (e in ifd0Entries) {
-            if (fitsInline(e)) { ifd0Placements += Placement(e, 0); continue }
+            if (fitsInline(e)) {
+                ifd0Placements += Placement(e, 0); continue
+            }
             ifd0Placements += Placement(e, cursor)
             cursor += alignedSize(e)
         }
 
         val exifIFDStart = cursor
-        val exifValOff   = exifIFDStart + 2 + exifEntries.size * 12 + 4
+        val exifValOff = exifIFDStart + 2 + exifEntries.size * 12 + 4
         cursor = exifValOff
 
         val exifPlacements = mutableListOf<Placement>()
         for (e in exifEntries) {
-            if (fitsInline(e)) { exifPlacements += Placement(e, 0); continue }
+            if (fitsInline(e)) {
+                exifPlacements += Placement(e, 0); continue
+            }
             exifPlacements += Placement(e, cursor)
             cursor += alignedSize(e)
         }
 
         // Add ExifIFD pointer to IFD0 with the computed offset.
         val exifPtrEntry = Entry(TAG_EXIF_IFD_POINTER, TYPE_LONG, 1, exifIFDStart)
-        ifd0Entries    += exifPtrEntry
+        ifd0Entries += exifPtrEntry
         ifd0Entries.sortBy { it.tag }
 
         // ── Write TIFF body ───────────────────────────────────────────────
@@ -263,8 +276,10 @@ object ExifInjector {
                     writeShortLE(entry.valueOrOffset as Int)
                     writeShortLE(0)
                 }
+
                 entry.type == TYPE_LONG && entry.count == 1 ->
                     writeIntLE(entry.valueOrOffset as Int)
+
                 else ->
                     writeIntLE(placement.offset)
             }
@@ -308,9 +323,9 @@ object ExifInjector {
 
         // ── Assemble APP1 ─────────────────────────────────────────────────
         val exifHeader = byteArrayOf(0x45, 0x78, 0x69, 0x66, 0x00, 0x00)  // "Exif\0\0"
-        val tiffBytes  = tiff.toByteArray()
-        val bodySize   = exifHeader.size + tiffBytes.size
-        val segLength  = bodySize + 2   // length field includes itself
+        val tiffBytes = tiff.toByteArray()
+        val bodySize = exifHeader.size + tiffBytes.size
+        val segLength = bodySize + 2   // length field includes itself
 
         out.write(MARKER_FF.toInt())
         out.write(MARKER_APP1.toInt())
@@ -326,16 +341,16 @@ object ExifInjector {
 
     /** True when the value fits in the 4-byte inline field of an IFD entry. */
     private fun fitsInline(e: Entry): Boolean = when (e.type) {
-        TYPE_SHORT  -> e.count == 1
-        TYPE_LONG   -> e.count == 1
-        else        -> false
+        TYPE_SHORT -> e.count == 1
+        TYPE_LONG -> e.count == 1
+        else -> false
     }
 
     /** Byte size of the value area for an entry that does NOT fit inline. */
     private fun alignedSize(e: Entry): Int = when (e.type) {
-        TYPE_ASCII    -> (e.valueOrOffset as ByteArray).size
+        TYPE_ASCII -> (e.valueOrOffset as ByteArray).size
         TYPE_RATIONAL -> 8 * e.count   // two 4-byte longs per rational
-        else          -> 4
+        else -> 4
     }
 
     /** Writes the variable-length value for an entry into [out]. */
@@ -370,9 +385,9 @@ object ExifInjector {
      *   8 = 270° (CW) / 90° CCW
      */
     private fun rotationToExifOrientation(degrees: Int): Int = when (degrees) {
-        90   -> 6
-        180  -> 3
-        270  -> 8
+        90 -> 6
+        180 -> 3
+        270 -> 8
         else -> 1
     }
 }

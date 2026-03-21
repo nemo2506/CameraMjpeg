@@ -10,6 +10,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager as AndroidCameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.TotalCaptureResult
 import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
@@ -25,7 +26,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Data types
+// NV21Frame
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -33,18 +34,16 @@ import java.util.concurrent.Executors
  *
  * Allocated once per stream resolution; circulated through the pipeline
  * to avoid per-frame heap allocation at full sensor resolution.
- *
- * After the consumer (encoder) finishes, it calls [recycle] to return
- * the slot to the pool.
+ * After the encoder finishes, it calls [recycle] to return the slot.
  */
 class NV21Frame(val width: Int, val height: Int) {
     val data: ByteArray = ByteArray(width * height * 3 / 2)
-    /** Returns this slot to its owning pool. Set by [FrameBufferPool]. */
+    /** Returns this slot to its owning pool. Injected by [FrameBufferPool]. */
     var recycle: () -> Unit = {}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Buffer pool
+// FrameBufferPool
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -55,8 +54,8 @@ class NV21Frame(val width: Int, val height: Int) {
  *   • slot 1 — waiting in the encode queue
  *   • slot 2 — being JPEG-encoded / returned
  *
- * [acquire] is non-blocking: returns null when all slots are in use so
- * the capture callback can drop the incoming frame without stalling.
+ * [acquire] is non-blocking: returns null when all slots are in use so the
+ * capture callback can drop the incoming frame without stalling.
  */
 class FrameBufferPool(width: Int, height: Int, capacity: Int = 3) {
 
@@ -70,7 +69,7 @@ class FrameBufferPool(width: Int, height: Int, capacity: Int = 3) {
         }
     }
 
-    /** Returns a free slot or null if all slots are currently in use. */
+    /** Returns a free slot, or null if every slot is currently in use. */
     fun acquire(): NV21Frame? = pool.poll()
 }
 
@@ -79,10 +78,8 @@ class FrameBufferPool(width: Int, height: Int, capacity: Int = 3) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * CameraStreamController
- *
  * Controls the camera stream for MJPEG output at the sensor's maximum native
- * resolution. Designed for quality-first, LAN streaming.
+ * resolution. Designed for quality-first LAN streaming.
  *
  * Pipeline
  * ────────
@@ -97,18 +94,22 @@ class FrameBufferPool(width: Int, height: Int, capacity: Int = 3) {
  *
  * Memory strategy
  * ───────────────
- * • [FrameBufferPool] — 3 pre-allocated NV21 slots, reused across frames.
- *   Zero heap allocation at capture time after initialisation.
- * • [jpegOutputStream] — single ByteArrayOutputStream, reset() before each
- *   frame to avoid internal reallocation.
- * • [encodeQueue] capacity = 1. When the encoder is busy the new frame is
- *   dropped (slot recycled) so frames never accumulate in memory.
+ * • [FrameBufferPool] — 3 pre-allocated NV21 slots, zero heap allocation
+ *   at capture time after initialisation.
+ * • [jpegOutputStream] — reset() before each encode, backing array reused.
+ * • [encodeQueue] capacity = 1 — frames never accumulate.
  *
  * Rotation strategy
  * ─────────────────
- * Angle = (sensorOrientation ± deviceRotation) % 360, read from
+ * Angle = (sensorOrientation ± deviceRotation) % 360 from
  * [CameraCharacteristics.SENSOR_ORIENTATION] + current display rotation.
- * No hard-coded 180° assumption; works for all device/camera combos.
+ * No hard-coded angle; correct for all device/camera combos.
+ *
+ * EXIF metadata (snapshot only)
+ * ─────────────────────────────
+ * [lastRotationAngle], [lastCaptureResult] and [currentCharacteristics] are
+ * public volatile fields consumed by [MjpegHttpServer] → [ExifInjector] on
+ * GET /snapshot.jpg. They have no effect on the MJPEG stream path.
  *
  * @param context    Application context.
  * @param frameStore Destination for encoded JPEG frames.
@@ -121,21 +122,10 @@ class CameraStreamController(
     // ── Companion ────────────────────────────────────────────────────────────
 
     private companion object {
-        const val TAG = "CameraStreamCtrl"
-
-        /** Visually near-lossless for LAN. */
-        const val DEFAULT_JPEG_QUALITY = 92
-
-        /**
-         * ImageReader buffer count.
-         * 3 = one being copied, one queued for encode, one spare.
-         */
-        const val IMAGE_READER_MAX_IMAGES = 3
-
-        /** Encode queue depth: 1 = "encode latest, drop the rest". */
-        const val ENCODE_QUEUE_CAPACITY = 1
-
-        /** Initial capacity of the reusable JPEG stream (4 MB). */
+        const val TAG                       = "CameraStreamCtrl"
+        const val DEFAULT_JPEG_QUALITY      = 92
+        const val IMAGE_READER_MAX_IMAGES   = 3
+        const val ENCODE_QUEUE_CAPACITY     = 1
         const val JPEG_STREAM_INITIAL_BYTES = 4 * 1024 * 1024
     }
 
@@ -152,7 +142,6 @@ class CameraStreamController(
     private var cameraThread: HandlerThread? = null
     private var cameraHandler: Handler? = null
 
-    /** Dedicated single-thread executor for JPEG encoding. */
     private var encodeExecutor = Executors.newSingleThreadExecutor()
     private var encodeQueue    = ArrayBlockingQueue<NV21Frame>(ENCODE_QUEUE_CAPACITY)
 
@@ -160,17 +149,38 @@ class CameraStreamController(
     private var isUsingFrontCamera = true
     private var jpegQuality        = DEFAULT_JPEG_QUALITY
 
-    // ── Buffer pool (allocated per resolution on start) ───────────────────────
-
     private var bufferPool: FrameBufferPool? = null
 
-    /**
-     * Reusable JPEG output stream. reset() before each encode call empties
-     * the internal buffer without releasing its backing array.
-     */
     private val jpegOutputStream = ByteArrayOutputStream(JPEG_STREAM_INITIAL_BYTES)
 
-    // ── Camera device callbacks ───────────────────────────────────────────────
+    // ── EXIF fields — read by MjpegHttpServer for /snapshot.jpg only ─────────
+
+    /**
+     * Rotation angle (0/90/180/270°) applied by the encode loop.
+     * Written once per [startEncodeLoop] call; read by [ExifInjector]
+     * to set the EXIF Orientation tag on snapshot responses.
+     */
+    @Volatile var lastRotationAngle: Int = 0
+        private set
+
+    /**
+     * Most recent [TotalCaptureResult] from the capture session.
+     * Updated on every frame via [CameraCaptureSession.CaptureCallback].
+     * Provides ExposureTime and ISOSpeedRatings to [ExifInjector].
+     * Null until the first captured frame.
+     */
+    @Volatile var lastCaptureResult: TotalCaptureResult? = null
+        private set
+
+    /**
+     * [CameraCharacteristics] for the currently open camera.
+     * Provides FNumber / lens aperture to [ExifInjector].
+     * Null before the first [start] call.
+     */
+    @Volatile var currentCharacteristics: CameraCharacteristics? = null
+        private set
+
+    // ── Camera device callback ────────────────────────────────────────────────
 
     private val cameraDeviceCallback = object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
@@ -204,7 +214,7 @@ class CameraStreamController(
 
     /**
      * Switch between front and back cameras.
-     * Resources are released before the new camera is opened.
+     * Resources are released cleanly before the new camera is opened.
      */
     fun switchCamera(useFront: Boolean) {
         isUsingFrontCamera = useFront
@@ -226,9 +236,13 @@ class CameraStreamController(
     private fun startCamera() {
         startCameraThread()
 
-        currentCameraId     = getCameraId(isUsingFrontCamera)
-        val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
-        val streamMap       = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        currentCameraId        = getCameraId(isUsingFrontCamera)
+        val characteristics    = cameraManager.getCameraCharacteristics(currentCameraId)
+        currentCharacteristics = characteristics                  // ← EXIF: FNumber
+
+        val streamMap = characteristics.get(
+            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+        )
 
         // Maximum native sensor resolution — quality first, no downscale.
         val size: Size = streamMap
@@ -236,26 +250,17 @@ class CameraStreamController(
             ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
             ?: Size(1920, 1080)
 
-        Log.i(TAG, "Stream: ${size.width}×${size.height}  " +
-                   "cam=$currentCameraId  quality=$jpegQuality")
+        Log.i(TAG, "Stream: ${size.width}×${size.height}  cam=$currentCameraId  quality=$jpegQuality")
 
-        // One pool per resolution — recreated on switchCamera().
-        bufferPool = FrameBufferPool(size.width, size.height, capacity = 3)
-
-        // Fresh executor + queue for this session.
+        bufferPool     = FrameBufferPool(size.width, size.height, capacity = 3)
         encodeExecutor = Executors.newSingleThreadExecutor()
         encodeQueue    = ArrayBlockingQueue(ENCODE_QUEUE_CAPACITY)
         startEncodeLoop(size, characteristics)
 
         imageReader = ImageReader.newInstance(
-            size.width, size.height,
-            ImageFormat.YUV_420_888,
-            IMAGE_READER_MAX_IMAGES
+            size.width, size.height, ImageFormat.YUV_420_888, IMAGE_READER_MAX_IMAGES
         ).also { reader ->
-            reader.setOnImageAvailableListener(
-                { onImageAvailable(it) },
-                cameraHandler
-            )
+            reader.setOnImageAvailableListener({ onImageAvailable(it) }, cameraHandler)
         }
 
         cameraManager.openCamera(currentCameraId, cameraDeviceCallback, cameraHandler)
@@ -267,18 +272,14 @@ class CameraStreamController(
 
     /**
      * Called by [ImageReader] on each new camera frame.
-     *
-     * Acquires the latest image (older buffered frames are discarded
-     * automatically), copies YUV data into a pooled [NV21Frame], then
-     * offers the slot to [encodeQueue]. If the queue is full (encoder busy)
-     * the slot is recycled immediately — no memory accumulation.
+     * Copies YUV data into a pooled [NV21Frame] and offers it to [encodeQueue].
+     * Drops the frame silently if the pool or queue is full (OOM prevention).
      */
     private fun onImageAvailable(reader: ImageReader) {
         val image: Image = reader.acquireLatestImage() ?: return
 
         val frame = bufferPool?.acquire()
         if (frame == null) {
-            // All slots busy — drop frame to prevent OOM.
             image.close()
             return
         }
@@ -294,7 +295,6 @@ class CameraStreamController(
             image.close()
         }
 
-        // Non-blocking offer: drop if encoder is still busy.
         if (!encodeQueue.offer(frame)) {
             frame.recycle()
         }
@@ -307,15 +307,14 @@ class CameraStreamController(
     /**
      * Blocks on [encodeQueue], rotates the NV21 buffer, encodes to JPEG,
      * publishes to [frameStore], then recycles the slot.
-     *
-     * The rotated output buffer is pre-allocated once here, not per frame.
+     * The rotated output buffer is pre-allocated once, not per frame.
      */
     private fun startEncodeLoop(size: Size, characteristics: CameraCharacteristics) {
         encodeExecutor.submit {
             val angle = computeRotationAngle(characteristics)
+            lastRotationAngle = angle                             // ← EXIF: Orientation
             Log.i(TAG, "Encode loop — rotation=$angle°")
 
-            // For 90°/270° width and height swap in the output.
             val (outW, outH) = when (angle) {
                 90, 270 -> size.height to size.width
                 else    -> size.width  to size.height
@@ -346,8 +345,8 @@ class CameraStreamController(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Computes the rotation to apply so output frames are upright
-     * for the current device orientation.
+     * Computes the total rotation to apply so frames are upright for the
+     * current device orientation.
      *
      *   Back camera  : (sensorOrientation - deviceRotation + 360) % 360
      *   Front camera : (sensorOrientation + deviceRotation + 270) % 360
@@ -365,18 +364,10 @@ class CameraStreamController(
                 else                 ->   0
             }
         } catch (_: Exception) { 0 }
-
         return if (isUsingFrontCamera) (sensor + device + 270) % 360
-               else                    (sensor - device + 360) % 360
+        else                    (sensor - device + 360) % 360
     }
 
-    /**
-     * Rotates an NV21 [src] buffer by [degrees] (0 / 90 / 180 / 270) into [dst].
-     *
-     * [dst] must be sized for the output:
-     *  - 0° / 180°  → width × height unchanged
-     *  - 90° / 270° → height × width (dimensions swapped)
-     */
     private fun rotateNv21(
         src: ByteArray, dst: ByteArray,
         width: Int, height: Int, degrees: Int
@@ -395,8 +386,7 @@ class CameraStreamController(
         for (i in ySize - 1 downTo 0)
             dst[out++] = src[i]
         for (i in src.size - 2 downTo ySize step 2) {
-            dst[out++] = src[i]
-            dst[out++] = src[i + 1]
+            dst[out++] = src[i]; dst[out++] = src[i + 1]
         }
     }
 
@@ -432,12 +422,6 @@ class CameraStreamController(
     // JPEG encoding
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Encodes an NV21 buffer to JPEG.
-     *
-     * [jpegOutputStream] is reset (not re-created) before each call,
-     * so its internal byte array is reused — no heap allocation per frame.
-     */
     private fun encodeJpeg(nv21: ByteArray, width: Int, height: Int): ByteArray {
         jpegOutputStream.reset()
         YuvImage(nv21, ImageFormat.NV21, width, height, null)
@@ -450,11 +434,8 @@ class CameraStreamController(
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Converts a [YUV_420_888][ImageFormat.YUV_420_888] [Image] to NV21 in-place.
-     *
-     * Uses bulk ByteBuffer.get() when plane layout allows it (stride == width)
-     * to minimise per-pixel overhead.
-     *
+     * Converts a [YUV_420_888][ImageFormat.YUV_420_888] [Image] to NV21.
+     * Uses bulk ByteBuffer.get() when row stride == width to avoid per-pixel overhead.
      * NV21 layout: Y plane (width×height) + interleaved VU pairs (width×height/2).
      */
     private fun imageToNV21(image: Image, nv21: ByteArray, width: Int, height: Int) {
@@ -484,7 +465,6 @@ class CameraStreamController(
         var offset        = ySize
 
         if (uvPixelStride == 1) {
-            // Fully planar — interleave V and U manually.
             repeat(height / 2) { row ->
                 vBuf.position(row * uvRowStride)
                 uBuf.position(row * uvRowStride)
@@ -494,7 +474,6 @@ class CameraStreamController(
                 }
             }
         } else {
-            // Semi-planar (pixel stride ≥ 2) — bulk copy per row.
             repeat(height / 2) { row ->
                 vBuf.position(row * uvRowStride)
                 vBuf.get(nv21, offset, width - 1)
@@ -520,19 +499,29 @@ class CameraStreamController(
                             .createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                             .apply {
                                 addTarget(surface)
-                                // Disable post-processing — reduce latency.
                                 set(CaptureRequest.EDGE_MODE,
                                     CaptureRequest.EDGE_MODE_OFF)
                                 set(CaptureRequest.NOISE_REDUCTION_MODE,
                                     CaptureRequest.NOISE_REDUCTION_MODE_OFF)
                                 set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE,
                                     CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF)
-                                // Continuous AF for sharp images at full resolution.
                                 set(CaptureRequest.CONTROL_AF_MODE,
                                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                             }
                             .build()
-                        session.setRepeatingRequest(request, null, cameraHandler)
+
+                        // CaptureCallback — feeds ExposureTime + ISO to ExifInjector.
+                        val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+                            override fun onCaptureCompleted(
+                                session: CameraCaptureSession,
+                                request: CaptureRequest,
+                                result: TotalCaptureResult
+                            ) {
+                                lastCaptureResult = result        // ← EXIF: ExposureTime, ISO
+                            }
+                        }
+
+                        session.setRepeatingRequest(request, captureCallback, cameraHandler)
                     } catch (e: Exception) {
                         Log.e(TAG, "setRepeatingRequest failed: ${e.message}", e)
                     }
@@ -552,18 +541,19 @@ class CameraStreamController(
     private fun stopInternal() {
         encodeExecutor.shutdownNow()
         encodeQueue.clear()
-        captureSession?.close(); captureSession = null
-        cameraDevice?.close();   cameraDevice   = null
-        imageReader?.close();    imageReader     = null
-        bufferPool = null
+        captureSession?.close();  captureSession       = null
+        cameraDevice?.close();    cameraDevice         = null
+        imageReader?.close();     imageReader          = null
+        bufferPool               = null
+        lastCaptureResult        = null
+        currentCharacteristics   = null
         jpegOutputStream.reset()
         stopCameraThread()
     }
 
     private fun startCameraThread() {
         cameraThread = HandlerThread(
-            "CameraBackground",
-            android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY
+            "CameraBackground", android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY
         ).also { it.start(); cameraHandler = Handler(it.looper) }
     }
 
@@ -579,7 +569,7 @@ class CameraStreamController(
 
     private fun getCameraId(useFront: Boolean): String {
         val facing = if (useFront) CameraCharacteristics.LENS_FACING_FRONT
-                     else          CameraCharacteristics.LENS_FACING_BACK
+        else          CameraCharacteristics.LENS_FACING_BACK
         return cameraManager.cameraIdList.first { id ->
             cameraManager.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.LENS_FACING) == facing
@@ -592,7 +582,9 @@ class CameraStreamController(
      */
     fun buildCameraOutputMapJson(): String {
         val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
-        val streamMap       = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val streamMap       = characteristics.get(
+            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+        )
         val formats = streamMap
             ?.getOutputSizes(ImageFormat.YUV_420_888)
             ?.sortedByDescending { it.width.toLong() * it.height.toLong() }
