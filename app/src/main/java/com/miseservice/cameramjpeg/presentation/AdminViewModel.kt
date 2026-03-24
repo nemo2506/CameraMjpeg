@@ -20,8 +20,11 @@ import com.miseservice.cameramjpeg.domain.usecase.LoadSettingsUseCase
 import com.miseservice.cameramjpeg.domain.usecase.SaveSettingsUseCase
 import com.miseservice.cameramjpeg.service.MjpegStreamingService
 import com.miseservice.cameramjpeg.util.NetworkManager
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -37,6 +40,8 @@ import kotlinx.coroutines.launch
  * - Controls the [MjpegStreamingService] lifecycle.
  * - Tracks battery status via a sticky broadcast receiver.
  * - Manages network interface selection via [NetworkManager].
+ * - Fires [networkUnavailableEvent] when the user tries to switch to an
+ *   interface that is not currently connected, so the UI can show an alert.
  * - Refreshes and exposes network info (IP, SSID, API URLs).
  *
  * @param application Android Application context
@@ -45,15 +50,25 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
 
-    private val loadSettingsUseCase    = LoadSettingsUseCase(SettingsRepository(appContext))
-    private val saveSettingsUseCase    = SaveSettingsUseCase(SettingsRepository(appContext))
+    private val loadSettingsUseCase     = LoadSettingsUseCase(SettingsRepository(appContext))
+    private val saveSettingsUseCase     = SaveSettingsUseCase(SettingsRepository(appContext))
     private val fetchNetworkInfoUseCase = FetchNetworkInfoUseCase(NetworkRepository(appContext))
 
     // NetworkManager is owned here — its lifecycle is tied to this ViewModel.
     private val networkManager = NetworkManager(appContext)
 
     /** Observed by the UI to display and react to the active network interface. */
-    val activeNetworkType: StateFlow<NetworkManager.NetworkType> = networkManager.activeNetworkType
+    val activeNetworkType: StateFlow<NetworkManager.NetworkType> =
+        networkManager.activeNetworkType
+
+    /**
+     * Fired (once per tap) when the user requests a switch to a network type
+     * that is not currently available.  The UI collects this to show an alert.
+     * Carries the [NetworkManager.NetworkType] that was unavailable.
+     */
+    private val _networkUnavailableEvent = MutableSharedFlow<NetworkManager.NetworkType>()
+    val networkUnavailableEvent: SharedFlow<NetworkManager.NetworkType> =
+        _networkUnavailableEvent.asSharedFlow()
 
     private val _uiState = MutableStateFlow(AdminUiState())
     val uiState: StateFlow<AdminUiState> = _uiState.asStateFlow()
@@ -78,12 +93,12 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             val settings = loadSettingsUseCase()
             _uiState.update {
                 it.copy(
-                    isLoading = false,
-                    isStreaming = settings.isStreaming,
-                    useFrontCamera = settings.useFrontCamera,
-                    keepScreenAwake = settings.keepScreenAwake,
-                    selectedQuality = settings.quality,
-                    portInput = settings.port.toString()
+                    isLoading       = false,
+                    isStreaming      = settings.isStreaming,
+                    useFrontCamera   = settings.useFrontCamera,
+                    keepScreenAwake  = settings.keepScreenAwake,
+                    selectedQuality  = settings.quality,
+                    portInput        = settings.port.toString()
                 )
             }
             refreshNetworkInfo()
@@ -108,10 +123,19 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------------------
 
     /**
-     * Requests process-level binding to the given [networkType].
-     * Delegates to [NetworkManager.switchTo].
+     * Requests process-level binding to [networkType].
+     *
+     * If the target interface is not currently available a
+     * [networkUnavailableEvent] is emitted so the UI can show an alert.
+     * No crash, no silent failure.
      */
     fun switchNetwork(networkType: NetworkManager.NetworkType) {
+        if (!networkManager.isAvailable(networkType)) {
+            viewModelScope.launch {
+                _networkUnavailableEvent.emit(networkType)
+            }
+            return
+        }
         networkManager.switchTo(networkType)
     }
 
@@ -119,14 +143,14 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
      * Refreshes network info (local IP, SSID, API/stream URLs) and updates [uiState].
      */
     fun refreshNetworkInfo() {
-        val port = currentPort() ?: 8080
+        val port    = currentPort() ?: 8080
         val network = fetchNetworkInfoUseCase(port)
         val ssidError = when {
-            !network.isWifiConnected                                        -> "Aucun Wi-Fi actif"
-            network.wifiSsid == null && !network.hasLocationPermission      -> "Autorisez la localisation pour afficher le SSID"
-            network.wifiSsid == null && !network.isLocationEnabled          -> "Activez la localisation de l'appareil pour afficher le SSID"
-            network.wifiSsid == null                                        -> "SSID indisponible sur ce réseau"
-            else                                                            -> null
+            !network.isWifiConnected                                   -> "Aucun Wi-Fi actif"
+            network.wifiSsid == null && !network.hasLocationPermission -> "Autorisez la localisation pour afficher le SSID"
+            network.wifiSsid == null && !network.isLocationEnabled     -> "Activez la localisation de l'appareil pour afficher le SSID"
+            network.wifiSsid == null                                   -> "SSID indisponible sur ce réseau"
+            else                                                       -> null
         }
         _uiState.update {
             it.copy(
@@ -178,8 +202,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Validates and applies a new streaming port.
      * If streaming is active the service is restarted on the new port immediately.
-     *
-     * @param rawPort Port as a raw string from the UI text field
      */
     fun setStreamingPort(rawPort: String) {
         val validatedPort = rawPort.toIntOrNull()?.takeIf { it in 1..65535 }
@@ -193,18 +215,13 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
         val settings = currentSettings()
         persist(settings)
-
-        if (_uiState.value.isStreaming) {
-            startStreamingInternal(settings)
-        }
+        if (_uiState.value.isStreaming) startStreamingInternal(settings)
         refreshNetworkInfo()
     }
 
     /**
      * Switches the active camera (front / back).
      * Notifies the service immediately if streaming is active.
-     *
-     * @param useFront true for front camera, false for back camera
      */
     fun setCamera(useFront: Boolean) {
         _uiState.update { it.copy(useFrontCamera = useFront) }
@@ -217,8 +234,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Changes the JPEG stream quality.
      * Notifies the service immediately if streaming is active.
-     *
-     * @param quality Selected [StreamQuality]
      */
     fun setQuality(quality: StreamQuality) {
         _uiState.update { it.copy(selectedQuality = quality) }
@@ -231,8 +246,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Toggles the keep-screen-awake / background wake-lock mode.
      * Notifies the service immediately if streaming is active.
-     *
-     * @param enabled true to keep the screen/CPU awake
      */
     fun setKeepAwake(enabled: Boolean) {
         _uiState.update { it.copy(keepScreenAwake = enabled) }
@@ -258,11 +271,8 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             appContext, android.Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            cameraOk && locationOk
-        } else {
-            cameraOk
-        }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) cameraOk && locationOk
+        else cameraOk
     }
 
     // -------------------------------------------------------------------------
@@ -279,10 +289,8 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun updateBatteryInfo(intent: Intent?) {
         intent ?: return
-
         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
         val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-
         if (level < 0 || scale <= 0) {
             _uiState.update {
                 it.copy(
@@ -294,7 +302,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-
         val percent    = ((level * 100f) / scale.toFloat()).toInt().coerceIn(0, 100)
         val statusCode = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
         val isCharging = statusCode == BatteryManager.BATTERY_STATUS_CHARGING ||
@@ -306,7 +313,7 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Branchée"
             else                                       -> "Indisponible"
         }
-        val rawTemp     = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+        val rawTemp      = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
         val temperatureC = rawTemp.takeIf { it != Int.MIN_VALUE }?.let { it / 10f }
 
         _uiState.update {
@@ -323,10 +330,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         ContextCompat.startForegroundService(
             appContext,
             MjpegStreamingService.startIntent(
-                context  = appContext,
-                port     = settings.port,
-                useFront = settings.useFrontCamera,
-                quality  = settings.quality,
+                context   = appContext,
+                port      = settings.port,
+                useFront  = settings.useFrontCamera,
+                quality   = settings.quality,
                 keepAwake = settings.keepScreenAwake
             )
         )
@@ -337,16 +344,14 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun currentSettings(isStreaming: Boolean = _uiState.value.isStreaming): AdminSettings =
         AdminSettings(
-            isStreaming    = isStreaming,
-            useFrontCamera = _uiState.value.useFrontCamera,
+            isStreaming     = isStreaming,
+            useFrontCamera  = _uiState.value.useFrontCamera,
             keepScreenAwake = _uiState.value.keepScreenAwake,
-            port           = currentPort() ?: 8080,
-            quality        = _uiState.value.selectedQuality
+            port            = currentPort() ?: 8080,
+            quality         = _uiState.value.selectedQuality
         )
 
     private fun persist(settings: AdminSettings = currentSettings()) {
-        viewModelScope.launch {
-            saveSettingsUseCase(settings)
-        }
+        viewModelScope.launch { saveSettingsUseCase(settings) }
     }
 }

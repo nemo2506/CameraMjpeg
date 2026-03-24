@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -33,7 +34,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,7 +66,9 @@ import kotlinx.coroutines.launch
  *
  * Main composable for the MJPEG streaming administration UI.
  * All state — including network interface selection — is read from [AdminViewModel].
- * No external dependencies beyond the ViewModel are required.
+ *
+ * Collects [AdminViewModel.networkUnavailableEvent] and shows an [AlertDialog]
+ * when the user tries to switch to a network interface that is not connected.
  *
  * @param viewModel The [AdminViewModel] instance
  * @param modifier  Optional layout modifier
@@ -78,6 +83,41 @@ fun AdminScreen(
     val clipboard   = LocalClipboard.current
     val scope       = rememberCoroutineScope()
 
+    // -------------------------------------------------------------------------
+    // Network-unavailable alert
+    // -------------------------------------------------------------------------
+
+    var unavailableNetworkType by remember { mutableStateOf<NetworkManager.NetworkType?>(null) }
+
+    LaunchedEffect(Unit) {
+        viewModel.networkUnavailableEvent.collect { type ->
+            unavailableNetworkType = type
+        }
+    }
+
+    unavailableNetworkType?.let { type ->
+        val label = if (type == NetworkManager.NetworkType.ETHERNET) "Ethernet" else "Wi-Fi"
+        AlertDialog(
+            onDismissRequest = { unavailableNetworkType = null },
+            title   = { Text("Réseau indisponible") },
+            text    = {
+                Text(
+                    "L'interface $label n'est pas connectée.\n" +
+                    "Branchez le câble ou activez l'interface, puis réessayez."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { unavailableNetworkType = null }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Main layout
+    // -------------------------------------------------------------------------
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -87,15 +127,12 @@ fun AdminScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text  = "Administration MJPEG",
-            style = MaterialTheme.typography.headlineSmall,
+            text       = "Administration MJPEG",
+            style      = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
 
-        StatusCard(
-            isStreaming    = uiState.isStreaming,
-            errorMessage   = uiState.errorMessage
-        )
+        StatusCard(isStreaming = uiState.isStreaming, errorMessage = uiState.errorMessage)
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -115,16 +152,16 @@ fun AdminScreen(
         }
 
         ConfigCard(
-            currentPort      = uiState.portInput.toIntOrNull() ?: 8080,
-            isStreaming       = uiState.isStreaming,
-            onPortSaved       = viewModel::setStreamingPort,
-            selectedQuality   = uiState.selectedQuality,
-            onQualityChange   = viewModel::setQuality,
-            useFrontCamera    = uiState.useFrontCamera,
-            onSetFront        = { viewModel.setCamera(true) },
-            onSetBack         = { viewModel.setCamera(false) },
-            keepScreenAwake   = uiState.keepScreenAwake,
-            onKeepAwakeChange = viewModel::setKeepAwake
+            currentPort       = uiState.portInput.toIntOrNull() ?: 8080,
+            isStreaming        = uiState.isStreaming,
+            onPortSaved        = viewModel::setStreamingPort,
+            selectedQuality    = uiState.selectedQuality,
+            onQualityChange    = viewModel::setQuality,
+            useFrontCamera     = uiState.useFrontCamera,
+            onSetFront         = { viewModel.setCamera(true) },
+            onSetBack          = { viewModel.setCamera(false) },
+            keepScreenAwake    = uiState.keepScreenAwake,
+            onKeepAwakeChange  = viewModel::setKeepAwake
         )
 
         NetworkCard(
@@ -155,12 +192,6 @@ fun AdminScreen(
 // StatusCard
 // =============================================================================
 
-/**
- * Displays the current streaming status and any error message.
- *
- * @param isStreaming  Whether streaming is currently active
- * @param errorMessage Optional error message to display
- */
 @Composable
 private fun StatusCard(isStreaming: Boolean, errorMessage: String?) {
     Card(
@@ -183,9 +214,7 @@ private fun StatusCard(isStreaming: Boolean, errorMessage: String?) {
                 fontWeight = FontWeight.Bold,
                 fontSize   = 18.sp
             )
-            errorMessage?.let {
-                Text(it, color = MaterialTheme.colorScheme.error)
-            }
+            errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }
 }
@@ -194,21 +223,6 @@ private fun StatusCard(isStreaming: Boolean, errorMessage: String?) {
 // ConfigCard
 // =============================================================================
 
-/**
- * Displays and allows editing of streaming configuration:
- * port, JPEG quality, camera selection, and keep-awake toggle.
- *
- * @param currentPort       Current streaming port (used to detect changes)
- * @param isStreaming        Whether streaming is active
- * @param onPortSaved        Called with the new port string when the user saves
- * @param selectedQuality    Currently selected [StreamQuality]
- * @param onQualityChange    Called when the user picks a new quality
- * @param useFrontCamera     Whether the front camera is active
- * @param onSetFront         Called to switch to the front camera
- * @param onSetBack          Called to switch to the back camera
- * @param keepScreenAwake    Whether the keep-awake flag is enabled
- * @param onKeepAwakeChange  Called when the user toggles keep-awake
- */
 @Composable
 private fun ConfigCard(
     currentPort: Int,
@@ -223,9 +237,9 @@ private fun ConfigCard(
     onKeepAwakeChange: (Boolean) -> Unit
 ) {
     var portInput by remember(currentPort) { mutableStateOf(currentPort.toString()) }
-    val parsedPort   = portInput.toIntOrNull()
-    val isValidPort  = parsedPort != null && parsedPort in 1..65535
-    val isChanged    = parsedPort != null && parsedPort != currentPort
+    val parsedPort     = portInput.toIntOrNull()
+    val isValidPort    = parsedPort != null && parsedPort in 1..65535
+    val isChanged      = parsedPort != null && parsedPort != currentPort
     val focusRequester = remember { FocusRequester() }
     val focusManager   = LocalFocusManager.current
 
@@ -242,21 +256,16 @@ private fun ConfigCard(
                 verticalAlignment     = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
-                    value         = portInput,
-                    onValueChange = { portInput = it.filter(Char::isDigit).take(5) },
-                    modifier      = Modifier
-                        .weight(1f)
-                        .focusRequester(focusRequester),
-                    label         = { Text("Port (1-65535)") },
-                    singleLine    = true,
+                    value           = portInput,
+                    onValueChange   = { portInput = it.filter(Char::isDigit).take(5) },
+                    modifier        = Modifier.weight(1f).focusRequester(focusRequester),
+                    label           = { Text("Port (1-65535)") },
+                    singleLine      = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError       = portInput.isNotBlank() && !isValidPort
+                    isError         = portInput.isNotBlank() && !isValidPort
                 )
                 Button(
-                    onClick  = {
-                        onPortSaved(portInput)
-                        focusManager.clearFocus()
-                    },
+                    onClick  = { onPortSaved(portInput); focusManager.clearFocus() },
                     enabled  = isValidPort && isChanged,
                     shape    = RoundedCornerShape(8.dp),
                     modifier = Modifier.size(width = 64.dp, height = 56.dp),
@@ -290,20 +299,12 @@ private fun ConfigCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Button(
-                    onClick  = onSetFront,
-                    modifier = Modifier.weight(1f),
-                    enabled  = !useFrontCamera
-                ) {
+                Button(onClick = onSetFront, modifier = Modifier.weight(1f), enabled = !useFrontCamera) {
                     Icon(Icons.Default.CameraFront, contentDescription = null)
                     Spacer(Modifier.size(6.dp))
                     Text("Avant")
                 }
-                Button(
-                    onClick  = onSetBack,
-                    modifier = Modifier.weight(1f),
-                    enabled  = useFrontCamera
-                ) {
+                Button(onClick = onSetBack, modifier = Modifier.weight(1f), enabled = useFrontCamera) {
                     Icon(Icons.Default.CameraRear, contentDescription = null)
                     Spacer(Modifier.size(6.dp))
                     Text("Arrière")
@@ -317,10 +318,7 @@ private fun ConfigCard(
             ) {
                 Column {
                     Text("Mode veille")
-                    Text(
-                        "Maintenir le stream en tâche de fond",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    Text("Maintenir le stream en tâche de fond", style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(checked = keepScreenAwake, onCheckedChange = onKeepAwakeChange)
             }
@@ -332,25 +330,6 @@ private fun ConfigCard(
 // NetworkCard
 // =============================================================================
 
-/**
- * Displays network and battery information, and provides copyable API/stream URLs.
- *
- * @param isWifiConnected     Whether Wi-Fi is connected
- * @param ssid                Wi-Fi SSID (null when unavailable)
- * @param localIp             Local IP address (null when unavailable)
- * @param batteryLevelPercent Battery level 0-100 (null when unavailable)
- * @param isBatteryCharging   Whether the battery is currently charging
- * @param batteryStatusLabel  Human-readable battery status
- * @param batteryTemperatureC Battery temperature in °C (null when unavailable)
- * @param batteryApiUrl       REST endpoint for battery JSON
- * @param cameraFormatsApiUrl REST endpoint for camera formats JSON
- * @param streamUrl           MJPEG stream URL
- * @param viewerUrl           Browser viewer URL
- * @param networkType         Currently active [NetworkManager.NetworkType]
- * @param onSwitchNetwork     Called when the user toggles Wi-Fi ↔ Ethernet
- * @param onRefresh           Called when the user taps the refresh button
- * @param onCopy              Called with a URL string when the user taps copy
- */
 @Composable
 private fun NetworkCard(
     isWifiConnected: Boolean,
@@ -370,10 +349,10 @@ private fun NetworkCard(
     onCopy: (String) -> Unit
 ) {
     val batteryColor = when {
-        batteryLevelPercent == null  -> MaterialTheme.colorScheme.onSurfaceVariant
-        batteryLevelPercent < 20     -> MaterialTheme.colorScheme.error
-        batteryLevelPercent < 50     -> MaterialTheme.colorScheme.tertiary
-        else                         -> Color(0xFF2E7D32)
+        batteryLevelPercent == null -> MaterialTheme.colorScheme.onSurfaceVariant
+        batteryLevelPercent < 20   -> MaterialTheme.colorScheme.error
+        batteryLevelPercent < 50   -> MaterialTheme.colorScheme.tertiary
+        else                       -> Color(0xFF2E7D32)
     }
 
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
@@ -381,10 +360,7 @@ private fun NetworkCard(
             modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier              = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Réseau", fontWeight = FontWeight.SemiBold)
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir")
@@ -395,24 +371,16 @@ private fun NetworkCard(
                 Icon(
                     imageVector = if (isWifiConnected) Icons.Default.Wifi else Icons.Default.WifiOff,
                     contentDescription = null,
-                    tint = if (isWifiConnected)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.error
+                    tint = if (isWifiConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                 )
                 Spacer(modifier = Modifier.size(6.dp))
                 Text(
-                    if (isWifiConnected)
-                        ssid ?: "Wi-Fi connecté (SSID indisponible)"
-                    else
-                        "Wi-Fi non connecté"
+                    if (isWifiConnected) ssid ?: "Wi-Fi connecté (SSID indisponible)"
+                    else "Wi-Fi non connecté"
                 )
             }
 
-            Text(
-                text       = "IP locale: ${localIp ?: "indisponible"}",
-                fontFamily = FontFamily.Monospace
-            )
+            Text("IP locale: ${localIp ?: "indisponible"}", fontFamily = FontFamily.Monospace)
 
             Text(
                 text = buildString {
@@ -420,16 +388,9 @@ private fun NetworkCard(
                     if (batteryLevelPercent == null) {
                         append("indisponible")
                     } else {
-                        append(batteryLevelPercent)
-                        append("%")
-                        if (!batteryStatusLabel.isNullOrBlank()) {
-                            append(" • ")
-                            append(batteryStatusLabel)
-                        }
-                        batteryTemperatureC?.let {
-                            append(" • ")
-                            append(String.format(java.util.Locale.US, "%.1f°C", it))
-                        }
+                        append(batteryLevelPercent); append("%")
+                        if (!batteryStatusLabel.isNullOrBlank()) { append(" • "); append(batteryStatusLabel) }
+                        batteryTemperatureC?.let { append(" • "); append(String.format(java.util.Locale.US, "%.1f°C", it)) }
                         if (isBatteryCharging) append(" ⚡")
                     }
                 },
@@ -453,10 +414,10 @@ private fun NetworkCard(
                 Text("Actif: ${networkType.name}", fontWeight = FontWeight.SemiBold)
             }
 
-            UrlRow(label = "API Batterie (JSON)",      value = batteryApiUrl,       onCopy = onCopy)
+            UrlRow(label = "API Batterie (JSON)",       value = batteryApiUrl,       onCopy = onCopy)
             UrlRow(label = "API Formats Caméra (JSON)", value = cameraFormatsApiUrl, onCopy = onCopy)
-            UrlRow(label = "Flux MJPEG",               value = streamUrl,           onCopy = onCopy)
-            UrlRow(label = "Viewer",                   value = viewerUrl,           onCopy = onCopy)
+            UrlRow(label = "Flux MJPEG",                value = streamUrl,           onCopy = onCopy)
+            UrlRow(label = "Viewer",                    value = viewerUrl,           onCopy = onCopy)
         }
     }
 }
@@ -465,13 +426,6 @@ private fun NetworkCard(
 // UrlRow
 // =============================================================================
 
-/**
- * Displays a labelled, copyable URL row.
- *
- * @param label  Label shown above the URL
- * @param value  URL string (null renders "indisponible" and disables the copy button)
- * @param onCopy Called with the URL when the user taps the copy icon
- */
 @Composable
 private fun UrlRow(label: String, value: String?, onCopy: (String) -> Unit) {
     Column {
@@ -481,15 +435,8 @@ private fun UrlRow(label: String, value: String?, onCopy: (String) -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically
         ) {
-            Text(
-                text       = value ?: "indisponible",
-                modifier   = Modifier.weight(1f),
-                fontFamily = FontFamily.Monospace
-            )
-            IconButton(
-                onClick  = { value?.let(onCopy) },
-                enabled  = !value.isNullOrEmpty()
-            ) {
+            Text(value ?: "indisponible", modifier = Modifier.weight(1f), fontFamily = FontFamily.Monospace)
+            IconButton(onClick = { value?.let(onCopy) }, enabled = !value.isNullOrEmpty()) {
                 Icon(Icons.Default.ContentCopy, contentDescription = "Copier")
             }
         }

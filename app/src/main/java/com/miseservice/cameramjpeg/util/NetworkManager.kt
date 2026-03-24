@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * IMPORTANT — why requestNetwork() is NOT used:
  * ConnectivityManager.requestNetwork() requires CHANGE_NETWORK_STATE, a
- * signature/privileged permission that a normal app cannot hold.  Calling it
+ * signature/privileged permission that a normal app cannot hold. Calling it
  * crashes with SecurityException on affected devices.
  *
  * Instead we:
@@ -25,8 +25,10 @@ import kotlinx.coroutines.flow.asStateFlow
  *      This only requires ACCESS_NETWORK_STATE and never throws.
  *   2. When the preferred transport is available we call bindProcessToNetwork()
  *      so all new sockets use that interface.
- *   3. setPreference() lets the UI express a preference; the binding is applied
+ *   3. switchTo() lets the UI express a preference; the binding is applied
  *      immediately if the network is already up, or deferred until onAvailable().
+ *   4. isAvailable() lets the UI check whether a transport is reachable before
+ *      committing to the switch, so it can show an alert instead of silently failing.
  *
  * Required permissions:
  *   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -63,7 +65,6 @@ class NetworkManager(private val context: Context) {
         override fun onLost(network: Network) {
             val type = availableNetworks.entries.firstOrNull { it.value == network }?.key ?: return
             availableNetworks.remove(type)
-            // If we lost the bound network, fall back to whatever is still up.
             if (type == preferredType) {
                 connectivityManager.bindProcessToNetwork(null)
                 _activeNetworkType.value = getCurrentNetworkType()
@@ -76,8 +77,6 @@ class NetworkManager(private val context: Context) {
     }
 
     init {
-        // Listen to both transports with a single passive callback.
-        // registerNetworkCallback() does NOT require CHANGE_NETWORK_STATE.
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
@@ -104,10 +103,17 @@ class NetworkManager(private val context: Context) {
     }
 
     /**
+     * Returns true when [networkType] is currently reachable (seen by the passive callback).
+     * Use this before calling [switchTo] to decide whether to show an alert in the UI.
+     */
+    fun isAvailable(networkType: NetworkType): Boolean =
+        availableNetworks.containsKey(networkType)
+
+    /**
      * Expresses a preference for [networkType].
      *
      * If that transport is already available the process is bound to it immediately.
-     * If it is not yet available the preference is stored and applied in [onAvailable].
+     * If it is not yet available the preference is stored and applied in onAvailable().
      *
      * Never calls requestNetwork() — no privileged permission required.
      */
@@ -132,14 +138,12 @@ class NetworkManager(private val context: Context) {
     // Private helpers
     // -------------------------------------------------------------------------
 
-    /** Binds the process to the preferred network if it is currently available. */
     private fun applyPreference() {
         val network = availableNetworks[preferredType] ?: return
         connectivityManager.bindProcessToNetwork(network)
         _activeNetworkType.value = preferredType
     }
 
-    /** Returns the [NetworkType] for a given [Network], or null if unknown. */
     private fun transportOf(network: Network): NetworkType? {
         val caps = connectivityManager.getNetworkCapabilities(network) ?: return null
         return when {
