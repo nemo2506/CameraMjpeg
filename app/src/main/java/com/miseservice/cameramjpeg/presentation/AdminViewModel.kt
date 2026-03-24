@@ -19,32 +19,58 @@ import com.miseservice.cameramjpeg.domain.usecase.FetchNetworkInfoUseCase
 import com.miseservice.cameramjpeg.domain.usecase.LoadSettingsUseCase
 import com.miseservice.cameramjpeg.domain.usecase.SaveSettingsUseCase
 import com.miseservice.cameramjpeg.service.MjpegStreamingService
+import com.miseservice.cameramjpeg.util.NetworkManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * ViewModel principal pour l’écran d’administration du streaming MJPEG.
- * Gère l’état de l’UI, la persistance des paramètres, le suivi batterie et le contrôle du service de streaming.
+ * AdminViewModel
  *
- * @param application Contexte application Android
+ * Primary ViewModel for the MJPEG streaming administration screen.
+ * Owns [NetworkManager] and exposes its state via [activeNetworkType].
+ *
+ * Responsibilities:
+ * - Loads and persists [AdminSettings].
+ * - Controls the [MjpegStreamingService] lifecycle.
+ * - Tracks battery status via a sticky broadcast receiver.
+ * - Manages network interface selection via [NetworkManager].
+ * - Refreshes and exposes network info (IP, SSID, API URLs).
+ *
+ * @param application Android Application context
  */
 class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
-    private val loadSettingsUseCase = LoadSettingsUseCase(SettingsRepository(appContext))
-    private val saveSettingsUseCase = SaveSettingsUseCase(SettingsRepository(appContext))
+
+    private val loadSettingsUseCase    = LoadSettingsUseCase(SettingsRepository(appContext))
+    private val saveSettingsUseCase    = SaveSettingsUseCase(SettingsRepository(appContext))
     private val fetchNetworkInfoUseCase = FetchNetworkInfoUseCase(NetworkRepository(appContext))
 
+    // NetworkManager is owned here — its lifecycle is tied to this ViewModel.
+    private val networkManager = NetworkManager(appContext)
+
+    /** Observed by the UI to display and react to the active network interface. */
+    val activeNetworkType: StateFlow<NetworkManager.NetworkType> = networkManager.activeNetworkType
+
     private val _uiState = MutableStateFlow(AdminUiState())
-    val uiState: StateFlow<AdminUiState> = _uiState
+    val uiState: StateFlow<AdminUiState> = _uiState.asStateFlow()
+
+    // -------------------------------------------------------------------------
+    // Battery receiver
+    // -------------------------------------------------------------------------
 
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             updateBatteryInfo(intent)
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Init
+    // -------------------------------------------------------------------------
 
     init {
         registerBatteryReceiver()
@@ -67,41 +93,93 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
+
     override fun onCleared() {
         runCatching { appContext.unregisterReceiver(batteryReceiver) }
+        networkManager.release()
         super.onCleared()
     }
 
+    // -------------------------------------------------------------------------
+    // Network
+    // -------------------------------------------------------------------------
+
     /**
-     * Rafraîchit les informations réseau (IP, SSID, URLs).
+     * Requests process-level binding to the given [networkType].
+     * Delegates to [NetworkManager.switchTo].
+     */
+    fun switchNetwork(networkType: NetworkManager.NetworkType) {
+        networkManager.switchTo(networkType)
+    }
+
+    /**
+     * Refreshes network info (local IP, SSID, API/stream URLs) and updates [uiState].
      */
     fun refreshNetworkInfo() {
         val port = currentPort() ?: 8080
         val network = fetchNetworkInfoUseCase(port)
         val ssidError = when {
-            !network.isWifiConnected -> "Aucun Wi-Fi actif"
-            network.wifiSsid == null && !network.hasLocationPermission -> "Autorisez la localisation pour afficher le SSID"
-            network.wifiSsid == null && !network.isLocationEnabled -> "Activez la localisation de l'appareil pour afficher le SSID"
-            network.wifiSsid == null -> "SSID indisponible sur ce reseau"
-            else -> null
+            !network.isWifiConnected                                        -> "Aucun Wi-Fi actif"
+            network.wifiSsid == null && !network.hasLocationPermission      -> "Autorisez la localisation pour afficher le SSID"
+            network.wifiSsid == null && !network.isLocationEnabled          -> "Activez la localisation de l'appareil pour afficher le SSID"
+            network.wifiSsid == null                                        -> "SSID indisponible sur ce réseau"
+            else                                                            -> null
         }
         _uiState.update {
             it.copy(
-                localIpAddress = network.localIpAddress,
-                wifiSsid = network.wifiSsid,
-                isWifiConnected = network.isWifiConnected,
-                batteryApiUrl = network.batteryApiUrl,
+                localIpAddress      = network.localIpAddress,
+                wifiSsid            = network.wifiSsid,
+                isWifiConnected     = network.isWifiConnected,
+                batteryApiUrl       = network.batteryApiUrl,
                 cameraFormatsApiUrl = network.cameraFormatsApiUrl,
-                streamUrl = network.streamUrl,
-                viewerUrl = network.viewerUrl,
-                errorMessage = ssidError
+                streamUrl           = network.streamUrl,
+                viewerUrl           = network.viewerUrl,
+                errorMessage        = ssidError
             )
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Streaming controls
+    // -------------------------------------------------------------------------
+
     /**
-     * Définit le port de streaming et met à jour l’état.
-     * @param rawPort Port sous forme de chaîne
+     * Starts the MJPEG streaming service with the current settings.
+     */
+    fun startStreaming() {
+        val port = currentPort()
+        if (port == null) {
+            _uiState.update { it.copy(errorMessage = "Port invalide (1-65535)") }
+            return
+        }
+        val settings = currentSettings(isStreaming = true)
+        _uiState.update { it.copy(isStreaming = true, errorMessage = null) }
+        startStreamingInternal(settings)
+        persist(settings)
+        refreshNetworkInfo()
+    }
+
+    /**
+     * Stops the MJPEG streaming service.
+     */
+    fun stopStreaming() {
+        appContext.startService(MjpegStreamingService.stopIntent(appContext))
+        _uiState.update { it.copy(isStreaming = false) }
+        persist(currentSettings(isStreaming = false))
+    }
+
+    // -------------------------------------------------------------------------
+    // Configuration
+    // -------------------------------------------------------------------------
+
+    /**
+     * Validates and applies a new streaming port.
+     * If streaming is active the service is restarted on the new port immediately.
+     *
+     * @param rawPort Port as a raw string from the UI text field
      */
     fun setStreamingPort(rawPort: String) {
         val validatedPort = rawPort.toIntOrNull()?.takeIf { it in 1..65535 }
@@ -109,16 +187,9 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(errorMessage = "Port invalide (1-65535)") }
             return
         }
+        if (_uiState.value.portInput.toIntOrNull() == validatedPort) return
 
-        val currentPort = _uiState.value.portInput.toIntOrNull()
-        if (currentPort == validatedPort) return
-
-        _uiState.update {
-            it.copy(
-                portInput = validatedPort.toString(),
-                errorMessage = null
-            )
-        }
+        _uiState.update { it.copy(portInput = validatedPort.toString(), errorMessage = null) }
 
         val settings = currentSettings()
         persist(settings)
@@ -126,13 +197,14 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         if (_uiState.value.isStreaming) {
             startStreamingInternal(settings)
         }
-
         refreshNetworkInfo()
     }
 
     /**
-     * Change la caméra utilisée (avant/arrière).
-     * @param useFront true pour caméra avant
+     * Switches the active camera (front / back).
+     * Notifies the service immediately if streaming is active.
+     *
+     * @param useFront true for front camera, false for back camera
      */
     fun setCamera(useFront: Boolean) {
         _uiState.update { it.copy(useFrontCamera = useFront) }
@@ -143,8 +215,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Change la qualité de streaming.
-     * @param quality Qualité sélectionnée
+     * Changes the JPEG stream quality.
+     * Notifies the service immediately if streaming is active.
+     *
+     * @param quality Selected [StreamQuality]
      */
     fun setQuality(quality: StreamQuality) {
         _uiState.update { it.copy(selectedQuality = quality) }
@@ -155,8 +229,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Active ou désactive le maintien de l’écran allumé.
-     * @param enabled true pour garder l’écran allumé
+     * Toggles the keep-screen-awake / background wake-lock mode.
+     * Notifies the service immediately if streaming is active.
+     *
+     * @param enabled true to keep the screen/CPU awake
      */
     fun setKeepAwake(enabled: Boolean) {
         _uiState.update { it.copy(keepScreenAwake = enabled) }
@@ -166,44 +242,32 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         persist()
     }
 
-    /**
-     * Démarre le streaming MJPEG.
-     */
-    fun startStreaming() {
-        val port = currentPort()
-        if (port == null) {
-            _uiState.update { it.copy(errorMessage = "Port invalide (1-65535)") }
-            return
-        }
-
-        val settings = currentSettings(isStreaming = true)
-        _uiState.update { it.copy(isStreaming = true, errorMessage = null) }
-        startStreamingInternal(settings)
-        persist(settings)
-        refreshNetworkInfo()
-    }
+    // -------------------------------------------------------------------------
+    // Permissions
+    // -------------------------------------------------------------------------
 
     /**
-     * Arrête le streaming MJPEG.
-     */
-    fun stopStreaming() {
-        appContext.startService(MjpegStreamingService.stopIntent(appContext))
-        _uiState.update { it.copy(isStreaming = false) }
-        persist(currentSettings(isStreaming = false))
-    }
-
-    /**
-     * Vérifie si les permissions requises sont accordées.
+     * Returns true when all permissions required for streaming are granted.
      */
     fun hasRequiredPermissions(): Boolean {
-        val cameraOk = ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        val locationOk = ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val cameraOk = ContextCompat.checkSelfPermission(
+            appContext, android.Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val locationOk = ContextCompat.checkSelfPermission(
+            appContext, android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             cameraOk && locationOk
         } else {
             cameraOk
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
 
     private fun registerBatteryReceiver() {
         val stickyIntent = appContext.registerReceiver(
@@ -215,41 +279,41 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun updateBatteryInfo(intent: Intent?) {
         intent ?: return
+
         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
         val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+
         if (level < 0 || scale <= 0) {
             _uiState.update {
                 it.copy(
                     batteryLevelPercent = null,
-                    isBatteryCharging = false,
-                    batteryStatusLabel = null,
+                    isBatteryCharging   = false,
+                    batteryStatusLabel  = null,
                     batteryTemperatureC = null
                 )
             }
             return
         }
 
-        val percent = ((level * 100f) / scale.toFloat()).toInt().coerceIn(0, 100)
+        val percent    = ((level * 100f) / scale.toFloat()).toInt().coerceIn(0, 100)
         val statusCode = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
         val isCharging = statusCode == BatteryManager.BATTERY_STATUS_CHARGING ||
-            statusCode == BatteryManager.BATTERY_STATUS_FULL
+                         statusCode == BatteryManager.BATTERY_STATUS_FULL
         val statusLabel = when (statusCode) {
-            BatteryManager.BATTERY_STATUS_CHARGING -> "En charge"
-            BatteryManager.BATTERY_STATUS_DISCHARGING -> "Décharge"
-            BatteryManager.BATTERY_STATUS_FULL -> "Pleine"
+            BatteryManager.BATTERY_STATUS_CHARGING     -> "En charge"
+            BatteryManager.BATTERY_STATUS_DISCHARGING  -> "Décharge"
+            BatteryManager.BATTERY_STATUS_FULL         -> "Pleine"
             BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Branchée"
-            else -> "Indisponible"
+            else                                       -> "Indisponible"
         }
-        val rawTemperature = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
-        val temperatureC = rawTemperature
-            .takeIf { it != Int.MIN_VALUE }
-            ?.let { it / 10f }
+        val rawTemp     = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+        val temperatureC = rawTemp.takeIf { it != Int.MIN_VALUE }?.let { it / 10f }
 
         _uiState.update {
             it.copy(
                 batteryLevelPercent = percent,
-                isBatteryCharging = isCharging,
-                batteryStatusLabel = statusLabel,
+                isBatteryCharging   = isCharging,
+                batteryStatusLabel  = statusLabel,
                 batteryTemperatureC = temperatureC
             )
         }
@@ -259,28 +323,26 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         ContextCompat.startForegroundService(
             appContext,
             MjpegStreamingService.startIntent(
-                context = appContext,
-                port = settings.port,
+                context  = appContext,
+                port     = settings.port,
                 useFront = settings.useFrontCamera,
-                quality = settings.quality,
+                quality  = settings.quality,
                 keepAwake = settings.keepScreenAwake
             )
         )
     }
 
-    private fun currentPort(): Int? {
-        return _uiState.value.portInput.toIntOrNull()?.takeIf { it in 1..65535 }
-    }
+    private fun currentPort(): Int? =
+        _uiState.value.portInput.toIntOrNull()?.takeIf { it in 1..65535 }
 
-    private fun currentSettings(isStreaming: Boolean = _uiState.value.isStreaming): AdminSettings {
-        return AdminSettings(
-            isStreaming = isStreaming,
+    private fun currentSettings(isStreaming: Boolean = _uiState.value.isStreaming): AdminSettings =
+        AdminSettings(
+            isStreaming    = isStreaming,
             useFrontCamera = _uiState.value.useFrontCamera,
             keepScreenAwake = _uiState.value.keepScreenAwake,
-            port = currentPort() ?: 8080,
-            quality = _uiState.value.selectedQuality
+            port           = currentPort() ?: 8080,
+            quality        = _uiState.value.selectedQuality
         )
-    }
 
     private fun persist(settings: AdminSettings = currentSettings()) {
         viewModelScope.launch {
